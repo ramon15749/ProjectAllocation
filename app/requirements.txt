@@ -11,4 +11,11 @@ redis==3.2.1
 rq==1.0
 rq-dashboard==0.5.1
 six==1.12.0
-Werkzeug==0.15.4
+pandas==1.1.4
+Werkzeug==0.16.1
+mypy==0.790
+data-science-types==0.2.22
+numpy==1.19.4
+Flask-Cors==3.0.10
+dataclasses
+dataclasses-json
