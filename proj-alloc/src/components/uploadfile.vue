@@ -24,11 +24,11 @@ export default {
       file: "",
     };
   },
-  props: ["filename"],
+  props: ["filename", "modelValue"],
   methods: {
     handleFileUpload() {
       this.file = this.$refs.file.files[0];
-      this.$emit("fileUploaded", this.file, this.filename);
+      this.$emit("update:modelValue", this.file);
     },
   },
 };

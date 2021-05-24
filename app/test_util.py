@@ -1,4 +1,4 @@
-from allocation import *
+from app.allocation import *
 
 # for testing
 def randomPref(
@@ -19,8 +19,8 @@ def randomPref(
     return res
 
 
-def create_proj_prof(l_in):
+def create_proj_staff(l_in):
     out = {}
     for (l, v) in l_in:
-        out[ProjectID(l)] = ProfID(v)
+        out[ProjectID(l)] = StaffID(v)
     return out

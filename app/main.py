@@ -12,6 +12,7 @@ import os
 import random
 import time
 import uuid
+import dataclasses
 
 from flask import request, jsonify, flash, redirect, send_from_directory, url_for, abort
 from flask_cors import CORS, cross_origin
@@ -37,9 +38,10 @@ jobs.rq.init_app(app)
 # and utilize sessions and redis.
 joblist = []
 jobdict = {}
+configsdict = {}
 
 
-@app.route('/')
+@app.route("/")
 def index():
     l = []
     # work on copy of joblist,
@@ -51,21 +53,24 @@ def index():
             joblist.remove(job)
             continue
 
-        l.append({
-            'id': job.get_id(),
-            'state': job.get_status(),
-            'progress': job.meta.get('progress'),
-            'result': job.result
-            })
+        l.append(
+            {
+                "id": job.get_id(),
+                "state": job.get_status(),
+                "progress": job.meta.get("progress"),
+                "result": job.result,
+            }
+        )
 
-    return render_template('index.html', joblist=l)
+    return render_template("index.html", joblist=l)
 
 
-@app.route('/enqueuejob', methods=['GET', 'POST'])
+@app.route("/enqueuejob", methods=["GET", "POST"])
 def enqueuejob():
-    job = jobs.approximate_pi.queue(int(request.form['num_iterations']))
+    job = jobs.approximate_pi.queue(int(request.form["num_iterations"]))
     joblist.append(job)
-    return redirect('/')
+    return redirect("/")
+
 
 @app.route("/allocate/", methods=["POST"])
 def allocation():
@@ -83,35 +88,49 @@ def allocation():
         studentPreferences = createStudentPrefMap(inputDict)
         stream2 = io.StringIO(proj.stream.read().decode("utf-8-sig"), newline=None)
         inputDict2 = csv.DictReader(stream2)
-        ProfProj = createProjProfMap(inputDict2)
+        StaffProj = createProjStaffMap(inputDict2)
         if "config" in request.files:
             configfile = request.files["config"]
             stream3 = io.StringIO(
                 configfile.stream.read().decode("utf-8-sig"), newline=None
             )
             configdict = json.load(stream3)
-            app.logger.info(f"configdict {configdict}")
             config = Config.from_dict(configdict)
         else:
             config = Config()
-        job = jobs.run_allocation.queue(
-            studentPreferences, ProfProj, config
-        )
+        # there must be a cleaner way
+        new_special = {}
+        for k, v in config.specialLoading.items():
+            new_special[int(k)] = v
+        config.specialLoading = new_special
+        new_special = {}
+        for k, v in config.disallowedMatching.items():
+            new_special[int(k)] = v
+        config.disallowedMatching = new_special
+        new_special = {}
+        for k, v in config.forcedMatching.items():
+            new_special[int(k)] = v
+        config.forcedMatching = new_special
+        job = jobs.run_allocation.queue(studentPreferences, StaffProj, config)
         joblist.append(job)
-        jobdict[job.get_id()] = job
-        app.logger.info(f"config {job.id}")
+        job_id = job.get_id()
+        jobdict[job_id] = job
+        configsdict[job_id] = config
+        logging.warning(f"init configsdict {configsdict}")
         return jsonify({"id": job.id}), 202
+
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-@app.route('/deletejob', methods=['GET', 'POST'])
+@app.route("/deletejob", methods=["GET", "POST"])
 def deletejob():
-    if request.args.get('jobid'):
-        job = rq.job.Job.fetch(request.args.get('jobid'), connection=jobs.rq.connection)
+    if request.args.get("jobid"):
+        job = rq.job.Job.fetch(request.args.get("jobid"), connection=jobs.rq.connection)
         job.delete()
-    return redirect('/')
+    return redirect("/")
+
 
 @app.route("/get_result/", methods=["GET"])
 def get_results():
@@ -123,13 +142,15 @@ def get_results():
             return jsonify(res), 200
     return ("", 204)
 
+
 @app.route("/get_progress/", methods=["GET"])
 def get_progress():
     id = request.args.get("job_id")
     job = jobdict.get(id)
     if job:
-        return jsonify(job.meta.get('progress'))
+        return jsonify(job.meta.get("progress"))
     return ("", 204)
+
 
 @app.route("/get_status/", methods=["GET"])
 def get_status():
@@ -137,4 +158,15 @@ def get_status():
     job = jobdict.get(id)
     if job:
         return job.get_status()
+    return ("", 204)
+
+
+@app.route("/get_config/", methods=["GET"])
+def get_config():
+    logging.warning(f"jobdict {jobdict}")
+    logging.warning(f"configsdict {configsdict}")
+    id = request.args.get("job_id")
+    config = configsdict.get(id)
+    if config:
+        return jsonify(dataclasses.asdict(config)), 200
     return ("", 204)

@@ -2,7 +2,7 @@
   <div>
     <p>
       {{ configName }}
-      <input
+      <InputText
         type="number"
         v-bind:placeholder="configName"
         :value="modelValue"

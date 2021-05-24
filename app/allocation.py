@@ -6,12 +6,14 @@ import csv
 import logging
 import random
 import sys
+from statistics import pvariance, mean, variance
+from functools import reduce
 
 from dataclasses_json import dataclass_json
 import numpy as np
 
 StudentID = NewType("StudentID", int)
-ProfID = NewType("ProfID", int)
+StaffID = NewType("StaffID", int)
 ProjectID = NewType("ProjectID", int)
 Move = Tuple[StudentID, ProjectID]
 
@@ -19,13 +21,20 @@ Move = Tuple[StudentID, ProjectID]
 @dataclass_json
 @dataclass
 class Config:
-    maxDepth: int = 20
+    maxDepth: int = 5
     defaultLoad: int = 5
-    specialLoading: Dict[ProfID, int] = field(default_factory=dict)
+    specialLoading: Dict[StaffID, int] = field(default_factory=dict)
     forcedMatching: Dict[StudentID, ProjectID] = field(default_factory=dict)
     disallowedMatching: Dict[StudentID, ProjectID] = field(default_factory=dict)
+    preferredStudent: Dict[StudentID, ProjectID] = field(default_factory=dict)
     numRuns: int = 5
+    maxRank: int = 8
     costUnalloc: int = 100
+    costNoStaffPref: int = 10
+    weightStaff: float = 10
+    weightRank: int = 1
+    weightUnfair: float = 0.1
+    weightVarLoad: float = 0.01
 
 
 def local_run(studentPref, ProjectInfo, maxDepth=7):
@@ -34,59 +43,111 @@ def local_run(studentPref, ProjectInfo, maxDepth=7):
         studentPreferences = createStudentPrefMap(inputDict)
     with open(ProjectInfo, mode="r", encoding="utf-8-sig") as infile:
         inputDict = csv.DictReader(infile)
-        ProfProjMap = createProjProfMap(inputDict)
+        StaffProjMap = createProjStaffMap(inputDict)
     config = Config()
-    costMap = getCostMap(studentPreferences)
-    studentProjectList = {
-        student: [proj for proj, _ in projList]
-        for student, projList in studentPreferences.items()
-    }
-    alloc = bestAllocate(studentProjectList, ProfProjMap, config, costMap)
+    alloc = bestAllocate(studentPreferences, StaffProjMap, config)
     return alloc
 
 
-def createProjProfMap(inputDict: List[Dict[str, str]]) -> Dict[ProjectID, ProfID]:
-    ret: Dict[ProjectID, ProfID] = {}
+def createProjStaffMap(inputDict: List[Dict[str, str]]) -> Dict[ProjectID, StaffID]:
+    ret: Dict[ProjectID, StaffID] = {}
     for row in inputDict:
-        ret[ProjectID(int(row["PID"]))] = ProfID(int(row["SUP"]))
+        ret[ProjectID(int(row["PID"]))] = StaffID(int(row["SUP"]))
     return ret
 
 
 def patchMap(
     studentPreferences: Dict[StudentID, List[ProjectID]],
-    ProjProfMap: Dict[ProjectID, ProfID],
+    ProjStaffMap: Dict[ProjectID, StaffID],
 ):
     allProjects = set(sum(studentPreferences.values(), []))
-    existingProject = set(ProjProfMap.keys())
+    existingProject = set(ProjStaffMap.keys())
     for proj in allProjects.difference(existingProject):
-        ProjProfMap[proj] = ProfID(0)
+        ProjStaffMap[proj] = StaffID(0)
 
-    return ProjProfMap
+    return ProjStaffMap
 
 
 def bestAllocate(
-    studentPreferences: Dict[StudentID, List[ProjectID]],
-    projProfMap: Dict[ProjectID, ProfID],
-    config: Config,
-    costMap: Dict[Move, int],
+    studentPreferences: Dict[StudentID, List[Tuple[ProjectID, int]]],
+    projStaffMap: Dict[ProjectID, StaffID],
+    staffPreferences: Dict[ProjectID, List[Tuple[StudentID, int]]] = None,
+    config: Config = Config(),
 ) -> Dict[StudentID, ProjectID]:
     cost = None
     result = None
     # remove matching so it is not possible
+    costMap_original = getCostMap(studentPreferences, config)
     studentPreferences = removeDisallowedMatching(studentPreferences, config)
     # remove matching and student then add the matching in the final allocation
     studentPreferences = removeForcedMatching(studentPreferences, config)
+    # remove project outside maxRank
+    studentPreferences = removeAboveMaxRank(studentPreferences, config)
+    # remove less preferred student
+    studentPreferences = setPreferredStudent(studentPreferences, config)
+    costMap = getCostMap(studentPreferences, config)
+    staffCostMap = getStaffCostMap(staffPreferences, config)
+    studentProjectList = {
+        student: [proj for proj, _ in projList]
+        for student, projList in studentPreferences.items()
+    }
     for i in range(config.numRuns):
-        r = allocate(studentPreferences, projProfMap, config, costMap)
+        r = allocate(studentProjectList, projStaffMap, config, costMap, staffCostMap)
         # add back forced matching
         r = addForcedMatching(r, config)
+        currentCost = (
+            config.weightStaff * sumCost(r, staffCostMap)
+            + config.weightRank * sumCost(r, costMap_original)
+            + config.weightUnfair * costUnfair(r, costMap_original)
+            + (
+                config.weightVarLoad
+                * absolute_deviation(getLoadMap(projStaffMap, r).values())
+                / len(r)
+            )
+        )
+        # print(
+        #     f"{currentCost} = {sumCost(r, costMap)} + {config.weightUnfair} * {costUnfair(r, costMap)} + {len(r)} * {(config.weightVariance/10)} \
+        #     * {pvariance(list(getLoadMap(projStaffMap, r).values()))}"
+        # )
         if cost == None:
             result = r
-            cost = sumCost(r, costMap)
+            cost = currentCost
             continue
-        result = r if sumCost(r, costMap) < cost else result
-        cost = sumCost(r, costMap) if sumCost(r, costMap) < cost else cost
+        result = r if currentCost < cost else result
+        cost = currentCost if currentCost < cost else cost
     return result
+
+
+def absolute_deviation(input):
+    if len(input) == 0:
+        return 0
+    meanVal = mean(input)
+    return sum([abs(meanVal - x) for x in input])
+
+
+def setPreferredStudent(
+    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
+) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
+    out = pref.copy()
+    for p_student, p_project in config.preferredStudent.items():
+        cost = dict(out[p_student]).get(p_project)
+        for s, proj_list in out.items():
+            if s == p_student:
+                continue
+            if p_project in [proj for proj, _ in out[s]]:
+                out[s] = [
+                    (p, c) for p, c in proj_list if not (c >= cost and p_project == p)
+                ]
+    return out
+
+
+def removeAboveMaxRank(
+    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
+) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
+    out = pref.copy()
+    for k, v in out.items():
+        out[k] = [(p, c) for (p, c) in v if c <= config.maxRank]
+    return out
 
 
 def addForcedMatching(
@@ -99,51 +160,66 @@ def addForcedMatching(
 
 
 def removeDisallowedMatching(
-    pref: Dict[StudentID, List[ProjectID]], config: Config
-) -> Dict[StudentID, List[ProjectID]]:
+    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
+) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
     out = pref.copy()
     for s, p in config.disallowedMatching.items():
-        print(out[s])
-        if p in out[s]:
-            out[s].remove(p)
+        if p in [proj for proj, _ in out[s]]:
+            out[s] = [(proj, c) for proj, c in out[s] if proj != p]
     return out
 
 
 def removeForcedMatching(
-    pref: Dict[StudentID, List[ProjectID]], config: Config
-) -> Dict[StudentID, List[ProjectID]]:
+    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
+) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
     out = pref.copy()
     for s, p in config.forcedMatching.items():
         if s in out.keys():
             out.pop(s)
-        for _, prefList in out.items():
-            if p in prefList:
-                prefList.remove(p)
-
+        for s, prefList in out.items():
+            if p in [pr for pr, _ in prefList]:
+                out[s] = [(proj, cost) for proj, cost in prefList if proj != p]
     return out
 
 
 def allocate(
     studentPreferences: Dict[StudentID, List[ProjectID]],
-    ProjProfMap: Dict[ProjectID, ProfID],
+    ProjStaffMap: Dict[ProjectID, StaffID],
     config: Config,
     costMap: Dict[Move, int],
+    staffCostMap: Dict[Move, int],
 ) -> Dict[StudentID, ProjectID]:
 
-    ProjProfMap = patchMap(studentPreferences, ProjProfMap)
-    SPalloc = preAssign(studentPreferences, ProjProfMap, config)
-    loadMap = getLoadMap(ProjProfMap, SPalloc)
-    first = SPalloc.copy()
+    ProjStaffMap = patchMap(studentPreferences, ProjStaffMap)
+    SPalloc = preAssign(studentPreferences, ProjStaffMap, config)
+    loadMap = getLoadMap(ProjStaffMap, SPalloc)
+    projPref = getProjectPreferences(costMap)
     PSalloc = {v: k for k, v in SPalloc.items()}
     cycleList = findAllShiftAndRotate(
-        SPalloc, PSalloc, studentPreferences, ProjProfMap, loadMap, costMap, config
+        SPalloc,
+        PSalloc,
+        studentPreferences,
+        ProjStaffMap,
+        loadMap,
+        costMap,
+        staffCostMap,
+        projPref,
+        config,
     )
     i = 0
     while len(cycleList) > 0:
-        loadMap = ShiftLoadMap(SPalloc, loadMap, cycleList[0][0], ProjProfMap)
+        loadMap, _ = ShiftLoadMap(SPalloc, loadMap, cycleList[0][0], ProjStaffMap)
         SPalloc, PSalloc = applyShiftOrRotate(SPalloc, PSalloc, cycleList[0][0])
         cycleList = findAllShiftAndRotate(
-            SPalloc, PSalloc, studentPreferences, ProjProfMap, loadMap, costMap, config
+            SPalloc,
+            PSalloc,
+            studentPreferences,
+            ProjStaffMap,
+            loadMap,
+            costMap,
+            staffCostMap,
+            projPref,
+            config,
         )
         i += 1
     assert len(studentPreferences) == len(SPalloc)
@@ -152,25 +228,25 @@ def allocate(
 
 def preAssign(
     studentPreferences: Dict[StudentID, List[ProjectID]],
-    LecturerProjectMap: Dict[ProjectID, ProfID],
+    StaffProjectMap: Dict[ProjectID, StaffID],
     config: Config,
 ) -> Dict[StudentID, ProjectID]:
     students = list(studentPreferences.keys())
     random.shuffle(students)
     allocationMap: Dict[StudentID, ProjectID] = {}
-    loadingMap: Dict[ProfID, int] = defaultdict(int)
+    loadingMap: Dict[StaffID, int] = defaultdict(int)
 
     for s in students:
         allocationMap[s] = ProjectID(0)  # unallocated
         for choice in studentPreferences[s]:
-            staff = LecturerProjectMap[choice]
+            staff = StaffProjectMap[choice]
             if staff != 0 and loadingMap[staff] >= config.specialLoading.get(
                 staff, config.defaultLoad
             ):
                 continue
             if choice not in allocationMap.values():
                 allocationMap[s] = choice
-                loadingMap[LecturerProjectMap[choice]] += 1
+                loadingMap[StaffProjectMap[choice]] += 1
                 break
     return allocationMap
 
@@ -178,14 +254,30 @@ def preAssign(
 # now costmap only track the preference order
 def getCostMap(
     studentPreferencesCost: Dict[StudentID, List[Tuple[ProjectID, int]]],
-    unallocCost=100,
+    config: Config = Config(),
 ) -> Dict[Tuple[StudentID, ProjectID], int]:
     costMap: Dict[Tuple[StudentID, ProjectID], int] = {}
     for s, projects in studentPreferencesCost.items():
         for project, cost in projects:
             if project != 0:
                 costMap[(s, project)] = cost
-        costMap[(s, ProjectID(0))] = unallocCost
+        costMap[(s, ProjectID(0))] = config.costUnalloc
+    return costMap
+
+
+def getStaffCostMap(
+    staffPreferencesCost: Optional[Dict[ProjectID, List[Tuple[StudentID, int]]]],
+    config: Config = Config(),
+) -> Dict[Tuple[StudentID, ProjectID], int]:
+    if not staffPreferencesCost:
+        return defaultdict(int)
+    costMap: Dict[Tuple[StudentID, ProjectID], int] = defaultdict(
+        lambda: config.costNoStaffPref
+    )
+    for project, students in staffPreferencesCost.items():
+        for s, cost in students:
+            if project != 0:
+                costMap[(s, project)] = cost
     return costMap
 
 
@@ -193,9 +285,11 @@ def findAllShiftAndRotate(
     SPalloc: Dict[StudentID, ProjectID],
     PSalloc: Dict[ProjectID, StudentID],
     studentPreferences: Dict[StudentID, List[ProjectID]],
-    LecturerProjectMap: Dict[ProjectID, ProfID],
-    loadMap: Dict[ProfID, int],
+    StaffProjectMap: Dict[ProjectID, StaffID],
+    loadMap: Dict[StaffID, int],
     costMap: Dict[Move, int],
+    staffCostMap: Dict[Move, int],
+    projPref: Dict[ProjectID, List[int]],
     config: Config,
 ) -> List[Tuple[List[Move], bool]]:
     possibleMoves = []
@@ -206,9 +300,11 @@ def findAllShiftAndRotate(
                 SPalloc,
                 PSalloc,
                 studentPreferences,
-                LecturerProjectMap,
+                StaffProjectMap,
                 costMap,
+                staffCostMap,
                 loadMap,
+                projPref,
                 config,
             )
         )
@@ -222,14 +318,17 @@ def BFS(
     SPallocation: Dict[StudentID, ProjectID],
     PSallocation: Dict[ProjectID, StudentID],
     studentPreferences: Dict[StudentID, List[ProjectID]],
-    LecturerProjectMap: Dict[ProjectID, ProfID],
+    projStaffMap: Dict[ProjectID, StaffID],
     costMap: Dict[Move, int],
-    loadMap: Dict[ProfID, int],
+    staffCostMap: Dict[Move, int],
+    loadMap: Dict[StaffID, int],
+    projPref: Dict[ProjectID, List[int]],
     config: Config,
 ) -> List[Tuple[List[Move], bool]]:
     cycle_or_shift: List[Tuple[List[Move], bool]] = []
     q: Deque[Tuple[StudentID, int, int, List[Move]]] = deque()
     q.append((s, 0, 0, []))
+    meanLoad = mean(loadMap.values())
     while q:
         x, depth, partialSum, path = q.popleft()
         if x == s and depth != 0:
@@ -246,72 +345,22 @@ def BFS(
                 if project == SPallocation[x]:
                     continue
                 movePath = path + [(x, project)]
-                movePartialSum = (
-                    partialSum + costMap[(x, project)] - costMap[(x, SPallocation[x])]
+                movePartialSum = partialSum + getMoveCost(
+                    costMap, staffCostMap, SPallocation, (x, project), projPref, config
                 )
                 if isValid(x, project, SPallocation, movePartialSum):
+                    # check if the project is a valid shift
                     if project not in PSallocation or project == 0:
-                        localLoadMap = ShiftLoadMap(
-                            SPallocation, loadMap, movePath, LecturerProjectMap
+                        localLoadMap, costShift = ShiftLoadMap(
+                            SPallocation, loadMap, movePath, projStaffMap
                         )
-                        if checkload(localLoadMap, config):
+                        movePartialSum += config.weightVarLoad * costShift
+                        if checkload(localLoadMap, config) and movePartialSum < 0:
                             cycle_or_shift.append((movePath, True))
                             return cycle_or_shift
                         continue
                     q.append((PSallocation[project], depth, movePartialSum, movePath))
     return cycle_or_shift
-
-
-def checkload(localLoadMap, config) -> bool:
-    for k, v in localLoadMap.items():
-        maxLoad = config.specialLoading.get(k, config.defaultLoad)
-        if v > maxLoad:
-            return False
-    return True
-
-
-def BFS_steepest(
-    s: StudentID,
-    SPallocation: Dict[StudentID, ProjectID],
-    PSallocation: Dict[ProjectID, StudentID],
-    studentPreferences: Dict[StudentID, List[ProjectID]],
-    costMap: Dict[Move, int],
-    maxDepth: int,
-) -> List[Tuple[List[Move], bool]]:
-    cycle_or_shift: List[Tuple[List[Move], int, bool]] = []
-    q: Deque[Tuple[StudentID, int, int, List[Move]]] = deque()
-    q.append((s, 0, 0, []))
-    while q:
-        x, depth, partialSum, path = q.popleft()
-        if x == s and depth != 0:
-            cycle_or_shift.append((path, partialSum, False))
-            continue
-        if x not in [x for x, _ in path]:
-            depth += 1
-            if depth > maxDepth:
-                continue
-            moves = studentPreferences[x].copy()
-            random.shuffle(moves)
-            for project in moves:
-                if project == SPallocation[x]:
-                    continue
-                movePath = path + [(x, project)]
-                movePartialSum = (
-                    partialSum + costMap[(x, project)] - costMap[(x, SPallocation[x])]
-                )
-                assert costMap[(x, project)] != costMap[(x, SPallocation[x])]
-                if isValid(x, project, SPallocation, movePartialSum):
-                    if project not in PSallocation:
-                        cycle_or_shift.append((movePath, movePartialSum, True))
-                        continue
-                    q.append((PSallocation[project], depth, movePartialSum, movePath))
-    if len(cycle_or_shift) == 0:
-        return []
-    index_min = np.argmin([partialSum for moves, partialSum, isShift in cycle_or_shift])
-    m: List[Move]
-    shift: bool
-    m, p, shift = cycle_or_shift[index_min]
-    return [(m, shift)]
 
 
 def isValid(
@@ -322,6 +371,91 @@ def isValid(
     if partialSum >= 0:
         return False
     return True
+
+
+def isValidShift(partialSum) -> bool:
+    return partialSum < 0
+
+
+def getVarLoad(loadMap: Dict[StaffID, int], staff: StaffID, mean: float) -> float:
+    return abs(loadMap[staff] - mean)
+
+
+def getMoveCost(costMap, staffCostMap, SPalloc, move, projPref, config):
+    x, project = move
+    deltaCost = costMap[(x, project)] - costMap[(x, SPalloc[x])]
+    deltaStaffCost = staffCostMap[(x, project)] - staffCostMap[(x, SPalloc[x])]
+    deltaUnfair = getUnfair(x, project, projPref, costMap) - getUnfair(
+        x, SPalloc[x], projPref, costMap
+    )
+    return (
+        config.weightStaff * deltaStaffCost
+        + config.weightRank * deltaCost
+        + config.weightUnfair * deltaUnfair
+    )
+
+
+def getUnfair(
+    student: StudentID,
+    project: ProjectID,
+    projPref: Dict[ProjectID, List[int]],
+    costMap: Dict[Move, int],
+) -> int:
+    cost = costMap[(student, project)]
+    return len([x for x in projPref[project] if x < cost])
+
+
+def checkload(localLoadMap, config) -> bool:
+    for k, v in localLoadMap.items():
+        maxLoad = config.specialLoading.get(k, config.defaultLoad)
+        if v > maxLoad:
+            return False
+    return True
+
+
+# def BFS_steepest(
+#    s: StudentID,
+#    SPallocation: Dict[StudentID, ProjectID],
+#    PSallocation: Dict[ProjectID, StudentID],
+#    studentPreferences: Dict[StudentID, List[ProjectID]],
+#    costMap: Dict[Move, int],
+#    staffCostMap: Dict[Move, int],
+#    maxDepth: int,
+# ) -> List[Tuple[List[Move], bool]]:
+#    cycle_or_shift: List[Tuple[List[Move], int, bool]] = []
+#    q: Deque[Tuple[StudentID, int, int, List[Move]]] = deque()
+#    q.append((s, 0, 0, []))
+#    while q:
+#        x, depth, partialSum, path = q.popleft()
+#        if x == s and depth != 0:
+#            cycle_or_shift.append((path, partialSum, False))
+#            continue
+#        if x not in [x for x, _ in path]:
+#            depth += 1
+#            if depth > maxDepth:
+#                continue
+#            moves = studentPreferences[x].copy()
+#            random.shuffle(moves)
+#            for project in moves:
+#                if project == SPallocation[x]:
+#                    continue
+#                movePath = path + [(x, project)]
+#                movePartialSum = (
+#                    partialSum + costMap[(x, project)] - costMap[(x, SPallocation[x])]
+#                )
+#                assert costMap[(x, project)] != costMap[(x, SPallocation[x])]
+#                if isValid(x, project, SPallocation, movePartialSum):
+#                    if project not in PSallocation:
+#                        cycle_or_shift.append((movePath, movePartialSum, True))
+#                        continue
+#                    q.append((PSallocation[project], depth, movePartialSum, movePath))
+#    if len(cycle_or_shift) == 0:
+#        return []
+#    index_min = np.argmin([partialSum for moves, partialSum, isShift in cycle_or_shift])
+#    m: List[Move]
+#    shift: bool
+#    m, p, shift = cycle_or_shift[index_min]
+#    return [(m, shift)]
 
 
 def createStudentPrefMap(
@@ -357,44 +491,50 @@ def applyShiftOrRotate(
 
 
 def getLoadMap(
-    LecturerProjectMap: Dict[ProjectID, ProfID], SPalloc: Dict[StudentID, ProjectID]
-) -> Dict[ProfID, int]:
-    ret: Dict[ProfID, int] = defaultdict(int)
+    StaffProjectMap: Dict[ProjectID, StaffID], SPalloc: Dict[StudentID, ProjectID]
+) -> Dict[StaffID, int]:
+    ret: Dict[StaffID, int] = defaultdict(int)
     for proj in SPalloc.values():
         if proj == 0:
             continue
-        if LecturerProjectMap[proj] != 0:
-            ret[LecturerProjectMap[proj]] += 1
+        if StaffProjectMap[proj] != 0:
+            ret[StaffProjectMap[proj]] += 1
     return ret
 
 
 def ShiftLoadMap(
     SPalloc: Dict[StudentID, ProjectID],
-    loadMap: Dict[ProfID, int],
+    loadMap: Dict[StaffID, int],
     moves: List[Move],
-    LecturerProjectMap: Dict[ProjectID, ProfID],
-) -> Dict[ProfID, int]:
+    StaffProjectMap: Dict[ProjectID, StaffID],
+) -> Tuple[Dict[StaffID, int], float]:
+    meanLoad = mean(loadMap.values())
     copiedLoadMap = loadMap.copy()
     projRemove = SPalloc[moves[0][0]]
     projAdd = moves[-1][1]
+    costLoad = 0.0
     if projAdd != 0:
-        staffAdd = LecturerProjectMap[projAdd]
+        staffAdd = StaffProjectMap[projAdd]
         if staffAdd != 0:
+            costLoad -= abs(copiedLoadMap[staffAdd] - meanLoad)
             copiedLoadMap[staffAdd] += 1
+            costLoad += abs(copiedLoadMap[staffAdd] - meanLoad)
     if projRemove != 0:
-        staffRemove = LecturerProjectMap[projRemove]
+        staffRemove = StaffProjectMap[projRemove]
         if staffRemove != 0:
+            costLoad -= abs(copiedLoadMap[staffRemove] - meanLoad)
             copiedLoadMap[staffRemove] -= 1
+            costLoad += abs(copiedLoadMap[staffRemove] - meanLoad)
     assert min(copiedLoadMap.values()) >= 0, "min is {}".format(
         min(copiedLoadMap.values())
     )
-    return copiedLoadMap
+    return copiedLoadMap, costLoad
 
 
 def sumCost(
     SPalloc: Dict[StudentID, ProjectID],
     costMap: Dict[Move, int],
-    skipUnassign: bool = True,
+    skipUnassign: bool = False,
 ) -> int:
     sum: int = 0
     for k, v in SPalloc.items():
@@ -403,5 +543,32 @@ def sumCost(
     return sum
 
 
-# if __name__ == "__main__":
-#     local_run(sys.argv[1], sys.argv[2])
+def getProjectPreferences(costMap: Dict[Move, int]) -> Dict[ProjectID, List[int]]:
+    projectStudentPref: Dict[ProjectID, List[int]] = defaultdict(list)
+    for (_, proj), cost in costMap.items():
+        projectStudentPref[proj] += [cost]
+    return projectStudentPref
+
+
+def getUnfairDict(
+    SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]
+) -> Dict[ProjectID, List[int]]:
+    projectStudentPref = getProjectPreferences(costMap)
+    costs = {}
+    for s, p in SPalloc.items():
+        current = costMap[(s, p)]
+        filtered = list(
+            filter(lambda x: True if x < current else False, projectStudentPref[p])
+        )
+        costs[p] = [current - x for x in filtered]
+
+    return costs
+
+
+def costUnfair(SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]):
+    unfair = getUnfairDict(SPalloc, costMap)
+    return reduce(lambda acc, x: acc + sum(x), unfair.values(), 0)
+
+
+if __name__ == "__main__":
+    local_run(sys.argv[1], sys.argv[2])

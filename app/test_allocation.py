@@ -5,31 +5,68 @@ from pprint import pprint
 from scipy.optimize import linear_sum_assignment
 import logging
 import random
-from app.test_util import randomPref, create_proj_prof
+from app.test_util import randomPref, create_proj_staff
 
 TestSet = NewType(
     "TestSet",
     Tuple[
         str,
         Dict[StudentID, List[Tuple[ProjectID, int]]],
-        Dict[ProjectID, ProfID],
+        Optional[Dict[ProjectID, List[Tuple[StudentID, int]]]],
+        Dict[ProjectID, StaffID],
         Config,
     ],
 )
-Test: TestSet = namedtuple("TestSet", ["name", "pref", "proj_details", "defaultLoad"])
+Test: TestSet = namedtuple(
+    "TestSet", ["name", "pref", "staffPref", "proj_details", "config"]
+)
+
+
+def test_ShiftLoadMap():
+    SPalloc = {
+        StudentID(1): ProjectID(1),
+        StudentID(2): ProjectID(2),
+        StudentID(3): ProjectID(3),
+    }
+    projStaff = create_proj_staff([(1, 1), (2, 2), (3, 3), (4, 2)])
+    loadMap = getLoadMap(projStaff, SPalloc)
+    moves = [
+        (StudentID(1), ProjectID(2)),
+        (StudentID(2), ProjectID(3)),
+        (StudentID(3), ProjectID(4)),
+    ]
+    ref = 2.0
+    res_loadMap, cost = ShiftLoadMap(SPalloc, loadMap, moves, projStaff)
+    assert res_loadMap == {
+        StaffID(1): 0,
+        StaffID(2): 2,
+        StaffID(3): 1,
+    }
+    assert cost == ref
+
+
+def test_unfair():
+    input_dict = {
+        1: [(2, 1), (1, 2), (3, 3)],
+        2: [(1, 1), (3, 2), (2, 3)],
+        3: [(2, 1), (3, 1), (1, 2)],
+    }
+    costMap = getCostMap(input_dict)
+    projPref = getProjectPreferences(costMap)
+    assert getUnfair(StudentID(1), ProjectID(3), projPref, costMap) == 2
 
 
 def test_costMap():
     input_dict = {1: [(1, 1), (2, 2)], 2: [(4, 1), (3, 2)]}
     ref = {(1, 1): 1, (1, 2): 2, (2, 4): 1, (2, 3): 2, (1, 0): 100, (2, 0): 100}
-    mockProjProf = {ProjectID(i): ProfID(i) for i in range(1, 5)}
+    mockProjStaff = {ProjectID(i): StaffID(i) for i in range(1, 5)}
     costMap = getCostMap(input_dict)
     assert ref == costMap
 
 
 def test_integration_linear_sum():
-    numStudent = 50
-    numProj = 70
+    numStudent = 100
+    numProj = 150
     prefs = randomPref(numStudent, numProj)
     cost = np.full((numStudent, numProj + 1), 100)
     costMap = getCostMap(prefs)
@@ -40,11 +77,19 @@ def test_integration_linear_sum():
     expected_student, expected_rank = linear_sum_assignment(cost)
     expected = {a + 1: b for a, b in zip(expected_student, expected_rank)}
 
-    mockProjProf = {ProjectID(i): ProfID(i) for i in range(1, numProj + 1)}
+    mockProjStaff = [(i, i) for i in range(1, numProj + 1)]
     studentProjectList = {
         student: [proj for proj, _ in projList] for student, projList in prefs.items()
     }
-    result = allocate(studentProjectList, mockProjProf, Config(), costMap)
+    result, _ = driver(
+        Test(
+            "linear sum",
+            prefs,
+            None,
+            mockProjStaff,
+            config=Config(weightUnfair=0, weightVarLoad=0),
+        )
+    )
     logging.debug(f"expected: {expected}")
     logging.debug(f"actual: {result}")
     assert sumCost(result, costMap) == cost[expected_student, expected_rank].sum()
@@ -63,6 +108,7 @@ def test_custom_assert():
                     2: [(4, 1), (3, 2), (1, 3), (2, 4)],
                     3: [(4, 1), (1, 2), (2, 3), (3, 4)],
                 },
+                None,
                 [(i, i) for i in range(1, 5)],
                 Config(costUnalloc=0),
             ),
@@ -76,6 +122,7 @@ def test_custom_assert():
                     2: [(4, 1), (3, 2), (1, 3), (2, 4)],
                     3: [(2, 1), (1, 2), (2, 3), (3, 4)],
                 },
+                None,
                 [(i, i) for i in range(1, 5)],
                 Config(disallowedMatching={StudentID(1): ProjectID(1)}),
             ),
@@ -89,6 +136,7 @@ def test_custom_assert():
                     2: [(4, 1), (3, 2), (1, 3), (2, 4)],
                     3: [(2, 1), (1, 2), (2, 3), (3, 4)],
                 },
+                None,
                 [(i, i) for i in range(1, 5)],
                 Config(forcedMatching={StudentID(1): ProjectID(4)}),
             ),
@@ -98,18 +146,47 @@ def test_custom_assert():
             Test(
                 "specialLoading is respected",
                 {1: [(1, 1), (2, 2), (3, 3)], 2: [(2, 1), (3, 2), (1, 3)]},
+                None,
                 [(1, 1), (2, 1), (3, 2)],
-                Config(defaultLoad=2, specialLoading={ProfID(1): 1}),
+                Config(defaultLoad=2, specialLoading={StaffID(1): 1}),
             ),
-            lambda x: getLoadMap(create_proj_prof([(1, 1), (2, 1), (3, 2)]), x[0])[
-                ProfID(1)
+            lambda x: getLoadMap(create_proj_staff([(1, 1), (2, 1), (3, 2)]), x[0])[
+                StaffID(1)
             ]
             <= 1,
+        ),
+        (
+            Test(
+                "preferred is preferred",
+                {
+                    1: [(1, 1), (2, 2), (3, 3), (4, 4)],
+                    2: [(1, 1), (3, 2), (4, 3), (2, 4)],
+                    3: [(2, 1), (1, 2), (4, 3), (3, 4)],
+                },
+                None,
+                [(i, i) for i in range(1, 5)],
+                Config(preferredStudent={StudentID(2): ProjectID(1)}),
+            ),
+            lambda x: x[0][StudentID(2)] == ProjectID(1),
+        ),
+        (
+            Test(
+                "preferred is preferred not forced",
+                {
+                    1: [(1, 1), (2, 2), (3, 3), (4, 4)],
+                    2: [(1, 1), (3, 2), (4, 3), (2, 4)],
+                    3: [(2, 1), (1, 2), (4, 3), (3, 4)],
+                },
+                None,
+                [(i, i) for i in range(1, 5)],
+                Config(preferredStudent={StudentID(2): ProjectID(2)}),
+            ),
+            lambda x: x[0][StudentID(2)] != ProjectID(2),
         ),
     ]
     for test, condition in testCases:
         r, costMap = driver(test)
-        print(f"{test.name}: {sumCost(r, costMap)}")
+        print(f"{test.name}: {r} {sumCost(r, costMap)}")
         assert condition((r, costMap)), f"{test.name} fails"
 
 
@@ -123,6 +200,7 @@ def test_integration_sumCost():
                     2: [(4, 1), (3, 2), (1, 3), (2, 4)],
                     3: [(4, 1), (1, 2), (2, 3), (3, 4)],
                 },
+                None,
                 [(i, i) for i in range(1, 5)],
                 Config(defaultLoad=5),
             ),
@@ -132,6 +210,7 @@ def test_integration_sumCost():
             Test(
                 "Non-restricted Loading Test",
                 {1: [(1, 1), (2, 2), (3, 3)], 2: [(2, 1), (3, 2), (1, 3)]},
+                None,
                 [(1, 1), (2, 1), (3, 2)],
                 Config(defaultLoad=2),
             ),
@@ -141,10 +220,21 @@ def test_integration_sumCost():
             Test(
                 "Restricted Loading Test",
                 {1: [(1, 1), (2, 2), (3, 3)], 2: [(2, 1), (3, 2), (1, 3)]},
+                None,
                 [(1, 1), (2, 1), (3, 2)],
                 Config(defaultLoad=1, numRuns=20),
             ),
             3,
+        ),
+        (
+            Test(
+                "Staff Preferences",
+                {1: [(1, 1), (2, 2), (3, 3)], 2: [(2, 1), (3, 2), (1, 3)]},
+                {1: [(2, 1), (1, 3)], 2: [(2, 1)], 3: [(1, 1)]},
+                [(1, 1), (2, 2), (3, 3)],
+                Config(),
+            ),
+            4,
         ),
     ]
     for test, expectedCost in testCases:
@@ -156,19 +246,23 @@ def test_integration_sumCost():
 
 
 def driver(test_input: TestSet):
-    name, pref, proj_details, config = test_input
-    proj_prof = create_proj_prof(proj_details)
-    stu_proj = {
-        student: [proj for proj, _ in projList] for student, projList in pref.items()
-    }
-    costMap = getCostMap(pref, config.costUnalloc)
-    r = bestAllocate(stu_proj, proj_prof, config, costMap)
+    name, pref, staff_pref, proj_details, config = test_input
+    print(f"running test {name}")
+    proj_staff = create_proj_staff(proj_details)
+    costMap = getCostMap(pref, config=config)
+    r = bestAllocate(pref, proj_staff, staff_pref, config=config)
     all_projects = list(filter((0).__ne__, list(r.values())))
+    # ensure that no project is assigned twice
     assert len(set(all_projects)) == len(
         all_projects
     ), f"{name} fails: project is assigned twice"
-    # ensure that no project is assigned twice
+
+    # ensure that there is no missing student
+    assert set(pref.keys()) == set(r.keys())
+
+    # ensure that the loading is followed
+    assert checkload(getLoadMap(proj_staff, r), config)
     return r, costMap
 
 
-test_property()
+test_custom_assert()
