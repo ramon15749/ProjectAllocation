@@ -7,7 +7,7 @@ import logging
 import random
 import sys
 from statistics import pvariance, mean, variance
-from functools import reduce
+from functools import partial, reduce
 
 from dataclasses_json import dataclass_json
 import numpy as np
@@ -35,6 +35,8 @@ class Config:
     weightRank: int = 1
     weightUnfair: float = 0.1
     weightVarLoad: float = 0.01
+    steepest: bool = False
+    # earlyStopping: float = 10
 
 
 def local_run(studentPref, ProjectInfo, maxDepth=7):
@@ -91,6 +93,8 @@ def bestAllocate(
         student: [proj for proj, _ in projList]
         for student, projList in studentPreferences.items()
     }
+    counter = 0
+    i = 0
     for i in range(config.numRuns):
         r = allocate(studentProjectList, projStaffMap, config, costMap, staffCostMap)
         # add back forced matching
@@ -105,16 +109,19 @@ def bestAllocate(
                 / len(r)
             )
         )
-        # print(
-        #     f"{currentCost} = {sumCost(r, costMap)} + {config.weightUnfair} * {costUnfair(r, costMap)} + {len(r)} * {(config.weightVariance/10)} \
-        #     * {pvariance(list(getLoadMap(projStaffMap, r).values()))}"
-        # )
         if cost == None:
             result = r
             cost = currentCost
             continue
+        # if config.earlyStopping != 0:
+        #     if currentCost >= cost:
+        #         counter += 1
+        # if counter > config.earlyStopping:
+        #     break
         result = r if currentCost < cost else result
         cost = currentCost if currentCost < cost else cost
+    # print(f"stopped at {i}")
+
     return result
 
 
@@ -189,13 +196,13 @@ def allocate(
     costMap: Dict[Move, int],
     staffCostMap: Dict[Move, int],
 ) -> Dict[StudentID, ProjectID]:
-
+    histories: List[Optional[List[Move]]] = []
     ProjStaffMap = patchMap(studentPreferences, ProjStaffMap)
     SPalloc = preAssign(studentPreferences, ProjStaffMap, config)
     loadMap = getLoadMap(ProjStaffMap, SPalloc)
     projPref = getProjectPreferences(costMap)
     PSalloc = {v: k for k, v in SPalloc.items()}
-    cycleList = findAllShiftAndRotate(
+    movement = getBestMovement(
         SPalloc,
         PSalloc,
         studentPreferences,
@@ -207,10 +214,10 @@ def allocate(
         config,
     )
     i = 0
-    while len(cycleList) > 0:
-        loadMap, _ = ShiftLoadMap(SPalloc, loadMap, cycleList[0][0], ProjStaffMap)
-        SPalloc, PSalloc = applyShiftOrRotate(SPalloc, PSalloc, cycleList[0][0])
-        cycleList = findAllShiftAndRotate(
+    while movement:
+        loadMap, _ = ShiftLoadMap(SPalloc, loadMap, movement, ProjStaffMap)
+        SPalloc, PSalloc = applyShiftOrRotate(SPalloc, PSalloc, movement)
+        movement = getBestMovement(
             SPalloc,
             PSalloc,
             studentPreferences,
@@ -222,6 +229,11 @@ def allocate(
             config,
         )
         i += 1
+        if i > 1000:
+            if movement in histories:
+                print("infiniteLoop")
+                break
+            histories += [movement]
     assert len(studentPreferences) == len(SPalloc)
     return SPalloc
 
@@ -281,7 +293,7 @@ def getStaffCostMap(
     return costMap
 
 
-def findAllShiftAndRotate(
+def getBestMovement(
     SPalloc: Dict[StudentID, ProjectID],
     PSalloc: Dict[ProjectID, StudentID],
     studentPreferences: Dict[StudentID, List[ProjectID]],
@@ -291,7 +303,7 @@ def findAllShiftAndRotate(
     staffCostMap: Dict[Move, int],
     projPref: Dict[ProjectID, List[int]],
     config: Config,
-) -> List[Tuple[List[Move], bool]]:
+) -> Optional[List[Move]]:
     possibleMoves = []
     for s in SPalloc.keys():
         possibleMoves.extend(
@@ -308,9 +320,13 @@ def findAllShiftAndRotate(
                 config,
             )
         )
-        if len(possibleMoves) > 0:
-            return possibleMoves
-    return possibleMoves
+        if config.steepest:
+            if len(possibleMoves) > 0:
+                return possibleMoves[0][0]
+    if len(possibleMoves) == 0:
+        return None
+    cycle, _, _ = min(possibleMoves, key=lambda t: t[2])
+    return cycle
 
 
 def BFS(
@@ -324,8 +340,8 @@ def BFS(
     loadMap: Dict[StaffID, int],
     projPref: Dict[ProjectID, List[int]],
     config: Config,
-) -> List[Tuple[List[Move], bool]]:
-    cycle_or_shift: List[Tuple[List[Move], bool]] = []
+) -> List[Tuple[List[Move], bool, float]]:
+    cycle_or_shift: List[Tuple[List[Move], bool, float]] = []
     q: Deque[Tuple[StudentID, int, int, List[Move]]] = deque()
     q.append((s, 0, 0, []))
     meanLoad = mean(loadMap.values())
@@ -333,8 +349,9 @@ def BFS(
         x, depth, partialSum, path = q.popleft()
         if x == s and depth != 0:
             if partialSum < 0:
-                cycle_or_shift.append((path, False))
-                return cycle_or_shift
+                cycle_or_shift.append((path, False, partialSum))
+                if not config.steepest:
+                    return cycle_or_shift
         if x not in [x for x, _ in path]:
             depth += 1
             if depth > config.maxDepth:
@@ -356,8 +373,9 @@ def BFS(
                         )
                         movePartialSum += config.weightVarLoad * costShift
                         if checkload(localLoadMap, config) and movePartialSum < 0:
-                            cycle_or_shift.append((movePath, True))
-                            return cycle_or_shift
+                            cycle_or_shift.append((movePath, True, movePartialSum))
+                            if not config.steepest:
+                                return cycle_or_shift
                         continue
                     q.append((PSallocation[project], depth, movePartialSum, movePath))
     return cycle_or_shift
@@ -383,11 +401,13 @@ def getVarLoad(loadMap: Dict[StaffID, int], staff: StaffID, mean: float) -> floa
 
 def getMoveCost(costMap, staffCostMap, SPalloc, move, projPref, config):
     x, project = move
+    deltaUnfair = 0
     deltaCost = costMap[(x, project)] - costMap[(x, SPalloc[x])]
     deltaStaffCost = staffCostMap[(x, project)] - staffCostMap[(x, SPalloc[x])]
-    deltaUnfair = getUnfair(x, project, projPref, costMap) - getUnfair(
-        x, SPalloc[x], projPref, costMap
-    )
+    if config.weightUnfair != 0:
+        deltaUnfair = getUnfair(x, project, projPref, costMap) - getUnfair(
+            x, SPalloc[x], projPref, costMap
+        )
     return (
         config.weightStaff * deltaStaffCost
         + config.weightRank * deltaCost
@@ -402,7 +422,9 @@ def getUnfair(
     costMap: Dict[Move, int],
 ) -> int:
     cost = costMap[(student, project)]
-    return len([x for x in projPref[project] if x < cost])
+    if project == ProjectID(0):
+        return 0
+    return sum([x for x in projPref[project] if x < cost])
 
 
 def checkload(localLoadMap, config) -> bool:
