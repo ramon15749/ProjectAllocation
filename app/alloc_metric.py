@@ -6,6 +6,7 @@ from functools import reduce
 
 def maxRank(SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]) -> int:
     relevant = [costMap[(k, v)] for k, v in SPalloc.items() if v != 0]
+    print([f"{k} {v} {costMap[(k, v)]}" for k, v in SPalloc.items() if v != 0])
     return max(relevant) if len(relevant) != 0 else 0
 
 

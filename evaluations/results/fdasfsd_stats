@@ -1,0 +1,1 @@
+{"1": {"MaxRank": 7, "MedianRank": 1, "AvgRank": 1.5338345864661653, "VarianceRank": 1.5120131154955059, "MaxLoad": 5, "MedianLoad": 3, "VarLoad": 2.108268887566924, "NoUnfair": 30, "MagUnfair": 47, "AveUnfair": 0.3533834586466165, "NoUnalloc": 0, "Duration": 4.080918073654175}}

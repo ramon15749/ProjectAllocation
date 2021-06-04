@@ -1,15 +1,15 @@
-version: '3.7'
+version: "3.7"
 
 services:
-  frontend:
-    build:
-      context: ./proj-alloc
-      target: 'develop-stage'
-    ports:
-    - '8080:8080'
-    volumes:
-    - '.:/app'
-    command: /bin/sh -c "yarn serve"
+  ## frontend:
+  ##   build:
+  ##     context: ./proj-alloc
+  ##     target: "develop-stage"
+  ##   ports:
+  ##     - "8080:8080"
+  ##   volumes:
+  ##     - ".:/app"
+  ##   command: /bin/sh -c "yarn serve"
   web:
     build: ./app
     image: master-image
@@ -22,12 +22,12 @@ services:
     depends_on:
       - redis
     command: rqworker --name worker --url redis://redis:6379/0
-# uncomment to have a another worker
-#  worker2:
-#    image: master-image
-#    depends_on:
-#      - redis
-#    command: rqworker --name worker2 --url redis://redis:6379/0
+  # uncomment to have a another worker
+  #  worker2:
+  #    image: master-image
+  #    depends_on:
+  #      - redis
+  #    command: rqworker --name worker2 --url redis://redis:6379/0
 
   dashboard:
     image: master-image

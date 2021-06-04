@@ -7,6 +7,7 @@ import logging
 import random
 from app.test_util import randomPref, create_proj_staff
 
+
 TestSet = NewType(
     "TestSet",
     Tuple[
@@ -53,7 +54,7 @@ def test_unfair():
     }
     costMap = getCostMap(input_dict)
     projPref = getProjectPreferences(costMap)
-    assert getUnfair(StudentID(1), ProjectID(3), projPref, costMap) == 2
+    assert getUnfair(StudentID(1), ProjectID(3), projPref, costMap) == 3
 
 
 def test_costMap():
@@ -65,8 +66,8 @@ def test_costMap():
 
 
 def test_integration_linear_sum():
-    numStudent = 100
-    numProj = 150
+    numStudent = 150
+    numProj = 200
     prefs = randomPref(numStudent, numProj)
     cost = np.full((numStudent, numProj + 1), 100)
     costMap = getCostMap(prefs)
@@ -78,16 +79,15 @@ def test_integration_linear_sum():
     expected = {a + 1: b for a, b in zip(expected_student, expected_rank)}
 
     mockProjStaff = [(i, i) for i in range(1, numProj + 1)]
-    studentProjectList = {
-        student: [proj for proj, _ in projList] for student, projList in prefs.items()
-    }
     result, _ = driver(
         Test(
             "linear sum",
             prefs,
             None,
             mockProjStaff,
-            config=Config(weightUnfair=0, weightVarLoad=0),
+            config=Config(
+                weightStaff=0, weightUnfair=0, weightVarLoad=0, numRuns=10, maxDepth=10
+            ),
         )
     )
     logging.debug(f"expected: {expected}")
@@ -246,6 +246,7 @@ def test_integration_sumCost():
 
 
 def driver(test_input: TestSet):
+    print("test")
     name, pref, staff_pref, proj_details, config = test_input
     print(f"running test {name}")
     proj_staff = create_proj_staff(proj_details)

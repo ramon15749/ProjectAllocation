@@ -1,6 +1,6 @@
 export function getStudentMap(inputJson){
     var result = inputJson.reduce(function(map, object) {
-        map[object.EEID] = object.Namei;
+        map[object.EEID] = object;
         return map;
     }, {})
     return result
@@ -14,11 +14,41 @@ export function getProjectMap(inputJson){
     return result
 }
 
+export function getUnfairDict(SPalloc, costMap){
+    var projectStudentPref = Object.entries(costMap).reduce(function (map, [,p]){
+        Object.entries(p).forEach(function ([proj,pref]){
+            if(!map[proj]) map[proj] = []
+            map[proj].push(parseInt(pref))
+        })
+        return map
+    },{})
+    var costs = Object.entries(SPalloc).reduce(function (map, [s,p]){
+        if (p != 0){
+            var current = parseInt(costMap[s][p])
+            var filtered = projectStudentPref[p].filter(x => x < current)
+            map[p] = filtered.map(x => current-x)
+        }
+        return map
+    }, {})
+    costs = Object.entries(costs).reduce(function(r, [e, v]) {
+        if (v.length > 0){r[e] = v;} 
+        return r;
+    }, {})
+    return costs
+}
+
+export function getUnfairMag(dict){
+    const res = Object.entries(dict).reduce(function(sum, [, prefs]){
+       prefs.forEach(function(p){sum+=p})
+       return sum
+    }, 0)
+    return res
+}
 export function allocationForStudent(allocation, studentMap, projectMap){
     var result = Object.entries(allocation).reduce(function(map, [k,v]) {
-        map[studentMap[k]] = projectMap[v];
+        map[studentMap[k]['Namei']] = projectMap[v];
         if (projectMap[v] == undefined){
-            map[studentMap[k]] = "undefined " + k +" : " + v
+            map[studentMap[k]['Namei']] = "undefined " + k +" : " + v
         }
         return map;
     }, {})
@@ -49,10 +79,12 @@ export function getMaxCost(allocation, pref){
 }
 
 export function getAverageCost(allocation, pref){
-    console.log("allocation ",allocation)
     const result = Object.entries(allocation).reduce(function(sum, [k,v]){
         var cost = parseInt(pref[k][v])
-        return sum+cost
+        if (!isNaN(cost)) {
+            return sum+cost
+        }
+        else {return sum}
     }, 0)
     return result/(Object.keys(allocation).length)
 }
@@ -60,26 +92,44 @@ export function getAverageCost(allocation, pref){
 export function getCostHistogram(allocation, pref){
     const result = Object.entries(allocation).reduce(function(map, [k,v]){
         var cost = parseInt(pref[k][v])
+        if (isNaN(cost)) {
+            cost = 'Unallocated'
+        }
         if (!(cost in map)){
             map[cost] = 0
         }
         map[cost]++
         return map
-    }, {})
+    }, {'Unallocated':0})
     return result 
 }
+export function getCostHistogramName(allocation, pref){
+    const result = Object.entries(allocation).reduce(function(map, [k,v]){
+        var cost = parseInt(pref[k][v])
+        if (isNaN(cost)) {
+            cost = 'Unallocated'
+        }
+        if (!(cost in map)){
+            map[cost] = []
+        }
+        map[cost] += `${k}: ${v}\n`
+        return map
+    }, {'Unallocated':0})
+    return result 
+}
+
 
 export function getLecturerProjectMap(inputJson){
     var result = inputJson.reduce(function(map, object) {
         map[object.PID] = object.SUP;
         return map;
-    }, {})
+    }, new Map())
     return result
 }
 
 export function getLecturerNameMap(inputJson){
     var result = inputJson.reduce(function(map, object) {
-        map[object.SUP] = object.Namei;
+        map[object.SUP] = object.Email;
         return map;
     }, {})
     return result
@@ -97,6 +147,22 @@ export function getLoadMap(allocation, ProjectLecturerMap){
     return result 
 }
 
+export function getLoadHistogram(LoadMap){
+    const result=Object.entries(LoadMap).reduce(function(map, [,v]){
+        if (!map[v]) map[v] = 0;
+        map[v]++
+        return map}, {})
+    
+    return result
+}
+export function getLoadHistogramName(LoadMap){
+    const result=Object.entries(LoadMap).reduce(function(map, [k,v]){
+        if (!map[v]) map[v] = '';
+        map[v]+= `${k}\n`
+        return map}, {})
+    
+    return result
+}
 export function getProjectMinPreferences(pref){
     var ProjectList = Object.entries(pref).reduce(function(map, [,list]) {
         Object.entries(list).forEach(function([k,v]){
@@ -110,6 +176,23 @@ export function getProjectMinPreferences(pref){
         return map
     }, {})
     return ProjectList
+}
+
+export function getStudentDetailedResult(pref, result, studentMap, projectMap, LecturerMap, LecturerNameMap){
+    var out = Object.entries(result).map(function([cid, pid]){
+        var row = {
+            CID : cid, 
+            StudentName : studentMap[cid]['Namei'], 
+            PID : pid, 
+            title : projectMap[pid], 
+            SID : LecturerMap[pid], 
+            StaffName: LecturerNameMap[LecturerMap[pid]],
+            rank: pref[cid][pid],
+            comments : studentMap[cid]['COMMENTS'], 
+        }
+        return row
+    })
+    return out
 }
 
 // export function getResultForLecturers(pref){

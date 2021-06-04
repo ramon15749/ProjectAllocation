@@ -84,7 +84,7 @@ def upload_file():
         studentPreferences = createStudentPrefMap(inputDict)
         stream2 = io.StringIO(proj.stream.read().decode("utf-8-sig"), newline=None)
         inputDict2 = csv.DictReader(stream2)
-        ProfProj = createProjProfMap(inputDict2)
+        StaffProj = createProjStaffMap(inputDict2)
         if "config" in request.files:
             configfile = request.files["config"]
             stream3 = io.StringIO(
@@ -98,7 +98,7 @@ def upload_file():
             config = Config()
         job = app.task_queue.enqueue(
             run_allocation_job,
-            (studentPreferences, ProfProj, config),
+            (studentPreferences, StaffProj, config),
         )
         app.logger.info(f"config {job.id}")
         return jsonify({"id": job.id}), 202
@@ -129,14 +129,14 @@ def get_results():
 
 def run_allocation(
     studentPreferences: Dict[StudentID, List[ProjectID]],
-    ProjProfMap: Dict[ProjectID, ProfID],
+    ProjStaffMap: Dict[ProjectID, StaffID],
     config: Config,
 ) -> Dict[StudentID, ProjectID]:
     costMap = getCostMap(studentPreferences)
     bestResult: Dict[StudentID, ProjectID] = {}
     bestCost: float = float("inf")
     for i in range(config.numRuns):
-        res = allocate(studentPreferences, ProjProfMap, config, costMap)
+        res = allocate(studentPreferences, ProjStaffMap, config, costMap)
         cost = sumCost(res, costMap)
         if cost < bestCost:
             bestCost = cost
@@ -144,12 +144,12 @@ def run_allocation(
     return bestResult
 
 
-def run_allocation_job(job_dict, results_dict, studentPref, ProfProj, config):
+def run_allocation_job(job_dict, results_dict, studentPref, StaffProj, config):
     app.logger.info(f"Processing {job_id}")
     while get_num_jobs(JobStatus.RUNNING) > consts.MAX_CONCURRENT_RUNNING_JOBS:
         time.sleep(consts.SLEEPING_TIME)
     try:
-        res = run_allocation(studentPref, ProfProj, config)
+        res = run_allocation(studentPref, StaffProj, config)
         update_job_status(job_dict, job_id, JobStatus.SUCCESS)
         results_dict[str(job_id)] = res
     except:
