@@ -2,6 +2,7 @@
   <div>
     <p>Job {{ this.id }}</p>
     <div>The job's status is {{ this.status }}</div>
+    <ProgressBar :value="this.progress.percent" />
     <div>The config is</div>
     <table style="margin: auto">
       <tr v-for="(c, v) in this.config" :key="c.v">
@@ -11,9 +12,16 @@
         </td>
       </tr>
     </table>
+    <Download name="Config" filetype="json" v-bind:JSONObject="this.config" />
     <div v-show="this.status == 'finished'">
       <Download
         name="Student Allocation"
+        filetype="txt"
+        v-bind:JSONObject="this.studentresult"
+      />
+      <Download
+        name="Staff Allocation"
+        filetype="txt"
         v-bind:JSONObject="this.studentresult"
       />
       <div class="p-grid">
@@ -111,6 +119,7 @@ export default {
     }
     this.getInfoNetwork();
     this.getInfoLocal(this.id);
+    this.progress = 0;
     this.filters2 = {
       StudentName: { value: null, matchMode: FilterMatchMode.CONTAINS },
     };
@@ -138,7 +147,7 @@ export default {
       projectMap: "",
       studentresult: "",
       preferences: "",
-      progress: "",
+      progress: 0,
       ProjectLecturer: "",
       LecturerName: "",
       loadMap: "",
@@ -155,6 +164,7 @@ export default {
   },
   methods: {
     clearResult() {
+      this.progress = 0;
       this.status = "";
       this.result = "";
       this.studentresult = "";
@@ -186,7 +196,7 @@ export default {
             job_id: this.id,
           },
         })
-        .then((res) => (this.progress = res.data))
+        .then((res) => ((this.progress = res.data), console.log(res.data)))
         .catch(
           (err) => (console.log("oh no " + err), clearInterval(this.timer))
         );

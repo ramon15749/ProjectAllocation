@@ -1,6 +1,7 @@
 <template>
   <div>
     Jobs:
+
     <div v-for="(c, id) in this.id_config" :key="id">
       <a @click="ToNewJob(id)"> {{ id }} </a>
       <p style="font-size: 10px; color: grey">{{ c }}</p>

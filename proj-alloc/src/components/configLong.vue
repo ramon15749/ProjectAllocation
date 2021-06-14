@@ -26,13 +26,13 @@
 <script>
 export default {
   name: "ConfigLong",
-  props: ["configName", "configList", "modelValue"],
+  props: ["configName", "configList", "modelValue", "initValue"],
   data() {
     return {
       applicants: [
         {
-          key: "",
-          value: "",
+          key: "4324234",
+          value: "432",
         },
       ],
     };

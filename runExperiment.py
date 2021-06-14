@@ -36,6 +36,7 @@ def main(path, result_path, config, load, csvInput):
         with open(ProjectInfo, mode="r", encoding="utf-8-sig") as infile:
             inputDict = csv.DictReader(infile)
             StaffProjMap = createProjStaffMap(inputDict)
+            print(StaffProjMap)
 
     stats, results = data_collection(
         studentPreferences, StaffProjMap, config, result_path, load
@@ -81,10 +82,11 @@ def data_collection(studentPreferences, StaffProjMap, config, location, load):
     costMap = getCostMap(studentPreferences)
     start = time.time()
     scale = [j for j in range(startInterval, maxVal + 1, 1)]
+    scale = [30]
     print(scale)
     for i in scale:
-        config.defaultLoad = i
-        metric = "MaxLoad"
+        config.numRuns = i
+        metric = "AvgRank"
         print(config)
         result = bestAllocate(studentPreferences, StaffProjMap, config=config)
         stats[i] = getStat(result, costMap, StaffProjMap)

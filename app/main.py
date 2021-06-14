@@ -21,8 +21,8 @@ from werkzeug.utils import secure_filename
 import flask
 import rq
 
+
 from allocation import *
-import consts
 
 ALLOWED_EXTENSIONS = ["csv"]
 app = flask.Flask(__name__)
@@ -30,7 +30,7 @@ cors = CORS(app)
 
 jobs.rq.init_app(app)
 
-
+test = {}
 # For sake of simplicty, we keep track of the jobs we've launched
 # in memory. This will only work as long there is only one python
 # process (web server context) and it must not get restarted.
@@ -38,7 +38,6 @@ jobs.rq.init_app(app)
 # and utilize sessions and redis.
 joblist = []
 jobdict = {}
-configsdict = {}
 
 
 @app.route("/")
@@ -72,23 +71,70 @@ def enqueuejob():
     return redirect("/")
 
 
-@app.route("/allocate/", methods=["POST"])
-def allocation():
+@app.route("/allocate_json/", methods=["POST"])
+def allocate_json():
+    print("hello")
     if request.method == "POST":
+        configSearch = request.args.get("configSearch")
+        studentPreferencesJson = request.get_json()["pref"]
+        studentPreferences = {int(k): v for k, v in studentPreferencesJson.items()}
+        StaffProjMapJson = request.get_json()["staff"]
+        StaffProj = {int(k): v for k, v in StaffProjMapJson.items()}
+
+        if "config" in request.get_json():
+            configdict = request.get_json()["config"]
+            config = Config.from_dict(configdict)
+        else:
+            config = Config()
+        # there must be a cleaner way
+        new_special = {}
+        for k, v in config.specialLoading.items():
+            new_special[int(k)] = v
+        config.specialLoading = new_special
+        new_special = {}
+        for k, v in config.disallowedMatching.items():
+            new_special[int(k)] = v
+        config.disallowedMatching = new_special
+        new_special = {}
+        for k, v in config.forcedMatching.items():
+            new_special[int(k)] = v
+        config.forcedMatching = new_special
+        if not configSearch:
+            job = jobs.run_allocation.queue(studentPreferences, StaffProj, config)
+        else:
+            job = jobs.run_allocation_configSearch.queue(
+                studentPreferences, StaffProj, config
+            )
+        joblist.append(job)
+        job_id = job.get_id()
+        jobdict[job_id] = job
+        return jsonify({"id": job.id}), 202
+
+
+@app.route("/allocate_file/", methods=["POST"])
+def allocate():
+    if request.method == "POST":
+        configSearch = request.args.get("configSearch")
         if "pref" not in request.files or "proj" not in request.files:
-            return flask.Response(status=500)
+            return flask.Response(status=400)
         pref = request.files["pref"]
         proj = request.files["proj"]
         if not allowed_file(pref.filename):
-            return flask.Response(status=500)
+            return flask.Response(status=400)
         if not allowed_file(pref.filename):
-            return flask.Response(status=500)
+            return flask.Response(status=400)
         stream = io.StringIO(pref.stream.read().decode("utf-8-sig"), newline=None)
         inputDict = csv.DictReader(stream)
+        if not set(["name", "P1", "N1"]).issubset(set(inputDict.fieldnames)):
+            return ("", 400)
         studentPreferences = createStudentPrefMap(inputDict)
         stream2 = io.StringIO(proj.stream.read().decode("utf-8-sig"), newline=None)
         inputDict2 = csv.DictReader(stream2)
+        if not set(["name", "P1", "N1"]).issubset(set(inputDict.fieldnames)):
+            return ("", 400)
         StaffProj = createProjStaffMap(inputDict2)
+        if not set(["PID", "SUP"]).issubset(set(inputDict2.fieldnames)):
+            return ("", 400)
         if "config" in request.files:
             configfile = request.files["config"]
             stream3 = io.StringIO(
@@ -111,12 +157,15 @@ def allocation():
         for k, v in config.forcedMatching.items():
             new_special[int(k)] = v
         config.forcedMatching = new_special
-        job = jobs.run_allocation.queue(studentPreferences, StaffProj, config)
+        if not configSearch:
+            job = jobs.run_allocation.queue(studentPreferences, StaffProj, config)
+        else:
+            job = jobs.run_allocation_configSearch.queue(
+                studentPreferences, StaffProj, config
+            )
         joblist.append(job)
         job_id = job.get_id()
         jobdict[job_id] = job
-        configsdict[job_id] = config
-        logging.warning(f"init configsdict {configsdict}")
         return jsonify({"id": job.id}), 202
 
 
@@ -148,6 +197,8 @@ def get_progress():
     id = request.args.get("job_id")
     job = jobdict.get(id)
     if job:
+        job.refresh()
+        logging.warning(f"jobs progress {job}")
         return jsonify(job.meta.get("progress"))
     return ("", 204)
 
@@ -163,10 +214,22 @@ def get_status():
 
 @app.route("/get_config/", methods=["GET"])
 def get_config():
-    logging.warning(f"jobdict {jobdict}")
-    logging.warning(f"configsdict {configsdict}")
     id = request.args.get("job_id")
-    config = configsdict.get(id)
-    if config:
-        return jsonify(dataclasses.asdict(config)), 200
+    job = jobdict.get(id)
+    if job:
+        job.refresh()
+        logging.warning(f"jobs progress {job}")
+        return jsonify(dataclasses.asdict(job.meta.get("config"))), 200
     return ("", 204)
+
+
+@app.route("/add", methods=["POST"])
+def add():
+    data = request.get_json()
+    test["a"] = 4
+    return jsonify({"sum": data["a"] + data["b"]})
+
+
+@app.route("/vroom", methods=["GET"])
+def vroom():
+    return "vroom"

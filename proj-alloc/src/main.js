@@ -21,11 +21,14 @@ import Fieldset from 'primevue/fieldset';
 import Tag from 'primevue/tag';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
+import ProgressBar from 'primevue/progressbar';
+import ToastService from 'primevue/toastservice';
 
 
 const app = createApp(App)
 app.use(router).mount('#app')
 app.use(PrimeVue);
+app.use(ToastService);
 app.component('Dropdown', Dropdown);
 app.component('InputText', InputText);
 app.component('Button', Button);
@@ -40,4 +43,5 @@ app.component('Fieldset', Fieldset);
 app.component('Tag', Tag);
 app.component('DataTable', DataTable);
 app.component('Column', Column);
+app.component('ProgressBar', ProgressBar);
 

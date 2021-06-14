@@ -1,11 +1,26 @@
 from collections import deque, defaultdict, namedtuple
 from dataclasses import dataclass, field
 from pprint import pprint
-from typing import Dict, NewType, Tuple, List, Deque, Set, NamedTuple, Optional
+from typing import (
+    Dict,
+    NewType,
+    Tuple,
+    List,
+    Deque,
+    Set,
+    NamedTuple,
+    Optional,
+    Callable,
+    Generator,
+)
 import random
 import sys
 from statistics import pvariance, mean, variance
 from functools import partial, reduce
+import time
+import math
+import statistics as stat
+from copy import deepcopy
 
 from dataclasses_json import dataclass_json
 import numpy as np
@@ -14,18 +29,19 @@ StudentID = NewType("StudentID", int)
 StaffID = NewType("StaffID", int)
 ProjectID = NewType("ProjectID", int)
 Move = Tuple[StudentID, ProjectID]
+PrefType = Dict[StudentID, List[Tuple[ProjectID, int]]]
 
 
 @dataclass_json
 @dataclass
 class Config:
-    maxDepth: int = 5
+    maxDepth: int = 10
     defaultLoad: int = 5
     specialLoading: Dict[StaffID, int] = field(default_factory=dict)
     forcedMatching: Dict[StudentID, ProjectID] = field(default_factory=dict)
     disallowedMatching: Dict[StudentID, ProjectID] = field(default_factory=dict)
     preferredStudent: Dict[StudentID, ProjectID] = field(default_factory=dict)
-    numRuns: int = 10
+    numRuns: int = 20
     maxRank: int = 8
     costUnalloc: int = 100
     costNoStaffPref: int = 10
@@ -36,18 +52,6 @@ class Config:
     steepest: bool = False
     preAssignType: str = "RSD"
     # earlyStopping: float = 10
-
-
-def local_run(studentPref, ProjectInfo, maxDepth=7):
-    with open(studentPref, mode="r", encoding="utf-8-sig") as infile:
-        inputDict = csv.DictReader(infile)
-        studentPreferences = createStudentPrefMap(inputDict)
-    with open(ProjectInfo, mode="r", encoding="utf-8-sig") as infile:
-        inputDict = csv.DictReader(infile)
-        StaffProjMap = createProjStaffMap(inputDict)
-    config = Config()
-    alloc = bestAllocate(studentPreferences, StaffProjMap, config)
-    return alloc
 
 
 def createProjStaffMap(inputDict: List[Dict[str, str]]) -> Dict[ProjectID, StaffID]:
@@ -69,75 +73,92 @@ def patchMap(
     return ProjStaffMap
 
 
-def bestAllocateAllResults(
-    studentPreferences: Dict[StudentID, List[Tuple[ProjectID, int]]],
-    projStaffMap: Dict[ProjectID, StaffID],
-    staffPreferences: Dict[ProjectID, List[Tuple[StudentID, int]]] = None,
+def applyPreallocConstraints(
+    studentPreferences: PrefType,
     config: Config = Config(),
-) -> List[Dict[StudentID, ProjectID]]:
-    cost = None
-    result = None
-    # remove matching so it is not possible
-    costMap_original = getCostMap(studentPreferences, config)
+) -> PrefType:
+    studentPreferences = setPreferredStudent(studentPreferences, config)
     studentPreferences = removeDisallowedMatching(studentPreferences, config)
     # remove matching and student then add the matching in the final allocation
     studentPreferences = removeForcedMatching(studentPreferences, config)
     # remove project outside maxRank
     studentPreferences = removeAboveMaxRank(studentPreferences, config)
     # remove less preferred student
-    studentPreferences = setPreferredStudent(studentPreferences, config)
-    costMap = getCostMap(studentPreferences, config)
+    return studentPreferences
+
+
+def bestAllocateAllResults(
+    studentPreferences: PrefType,
+    projStaffMap: Dict[ProjectID, StaffID],
+    staffPreferences: Dict[ProjectID, List[Tuple[StudentID, int]]] = None,
+    config: Config = Config(),
+    callback: Generator[None, Optional[float], None] = None,
+) -> Tuple[List[Dict[StudentID, ProjectID]], List[float]]:
+    if callback:
+        callback.send(None)
+    costMap_original = getCostMap(studentPreferences, config)
+    studentPreferences = applyPreallocConstraints(studentPreferences, config)
     staffCostMap = getStaffCostMap(staffPreferences, config)
+    costMap = getCostMap(studentPreferences, config)
+    # remove matching so it is not possible
     studentProjectList = {
         student: [proj for proj, _ in projList]
         for student, projList in studentPreferences.items()
     }
     counter = 0
     results = []
+    cost = None
+    costs = []
     i = 0
     for i in range(config.numRuns):
+        # print(i)
+        start_time = time.time()
         r = allocate(studentProjectList, projStaffMap, config, costMap, staffCostMap)
         # add back forced matching
         r = addForcedMatching(r, config)
-        currentCost = (
-            config.weightStaff * sumCost(r, staffCostMap)
-            + config.weightRank * sumCost(r, costMap_original)
-            + config.weightUnfair * costUnfair(r, costMap_original)
-            + (
-                config.weightVarLoad
-                * absolute_deviation(getLoadMap(projStaffMap, r).values())
-                / len(r)
-            )
+        currentCost = getcurrentCost(
+            config, r, costMap_original, staffCostMap, projStaffMap
         )
+        costs += [currentCost / len(r)]
         if cost == None:
             result = r
             cost = currentCost
             continue
-
         results += [r]
-        # result = r if currentCost < cost else result
-        # cost = currentCost if currentCost < cost else cost
+        if callback:
+            callback.send(((i + 1) / config.numRuns) * 100)
 
-    return results
+    return results, costs
+
+
+def getcurrentCost(config, r, costMap, staffCostMap, projStaffMap):
+    return (
+        config.weightStaff * sumCost(r, staffCostMap)
+        + config.weightRank * sumCost(r, costMap)
+        + config.weightUnfair * costUnfair(r, costMap)
+        + (
+            config.weightVarLoad
+            * absolute_deviation(getLoadMap(projStaffMap, r).values())
+            / len(r)
+        )
+    )
 
 
 def bestAllocate(
-    studentPreferences: Dict[StudentID, List[Tuple[ProjectID, int]]],
+    studentPreferences: PrefType,
     projStaffMap: Dict[ProjectID, StaffID],
     staffPreferences: Dict[ProjectID, List[Tuple[StudentID, int]]] = None,
     config: Config = Config(),
+    callback: Generator[None, Optional[float], None] = None,
 ) -> Dict[StudentID, ProjectID]:
     cost = None
-    result = None
+    result = {}
     # remove matching so it is not possible
+    if callback:
+        callback.send(None)
     costMap_original = getCostMap(studentPreferences, config)
-    studentPreferences = removeDisallowedMatching(studentPreferences, config)
-    # remove matching and student then add the matching in the final allocation
-    studentPreferences = removeForcedMatching(studentPreferences, config)
-    # remove project outside maxRank
-    studentPreferences = removeAboveMaxRank(studentPreferences, config)
-    # remove less preferred student
-    studentPreferences = setPreferredStudent(studentPreferences, config)
+    studentPreferences = applyPreallocConstraints(studentPreferences, config)
+    staffCostMap = getStaffCostMap(staffPreferences, config)
     costMap = getCostMap(studentPreferences, config)
     staffCostMap = getStaffCostMap(staffPreferences, config)
     studentProjectList = {
@@ -147,19 +168,11 @@ def bestAllocate(
     counter = 0
     i = 0
     for i in range(config.numRuns):
-        print(f"started run {i}")
         r = allocate(studentProjectList, projStaffMap, config, costMap, staffCostMap)
         # add back forced matching
         r = addForcedMatching(r, config)
-        currentCost = (
-            config.weightStaff * sumCost(r, staffCostMap)
-            + config.weightRank * sumCost(r, costMap_original)
-            + config.weightUnfair * costUnfair(r, costMap_original)
-            + (
-                config.weightVarLoad
-                * absolute_deviation(getLoadMap(projStaffMap, r).values())
-                / len(r)
-            )
+        currentCost = getcurrentCost(
+            config, r, costMap_original, staffCostMap, projStaffMap
         )
         if cost == None:
             result = r
@@ -168,6 +181,8 @@ def bestAllocate(
 
         result = r if currentCost < cost else result
         cost = currentCost if currentCost < cost else cost
+        if callback:
+            callback.send(((i + 1) / config.numRuns) * 100)
 
     return result
 
@@ -179,10 +194,8 @@ def absolute_deviation(input):
     return sum([abs(meanVal - x) for x in input])
 
 
-def setPreferredStudent(
-    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
-) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
-    out = pref.copy()
+def setPreferredStudent(pref: PrefType, config: Config) -> PrefType:
+    out = deepcopy(pref)
     for p_student, p_project in config.preferredStudent.items():
         cost = dict(out[p_student]).get(p_project)
         for s, proj_list in out.items():
@@ -195,10 +208,8 @@ def setPreferredStudent(
     return out
 
 
-def removeAboveMaxRank(
-    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
-) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
-    out = pref.copy()
+def removeAboveMaxRank(pref: PrefType, config: Config) -> PrefType:
+    out = deepcopy(pref)
     for k, v in out.items():
         out[k] = [(p, c) for (p, c) in v if c <= config.maxRank]
     return out
@@ -207,26 +218,22 @@ def removeAboveMaxRank(
 def addForcedMatching(
     SPalloc: Dict[StudentID, ProjectID], config: Config
 ) -> Dict[StudentID, ProjectID]:
-    out = SPalloc.copy()
+    out = deepcopy(SPalloc)
     for s, p in config.forcedMatching.items():
         out[s] = p
     return out
 
 
-def removeDisallowedMatching(
-    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
-) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
-    out = pref.copy()
+def removeDisallowedMatching(pref: PrefType, config: Config) -> PrefType:
+    out = deepcopy(pref)
     for s, p in config.disallowedMatching.items():
         if p in [proj for proj, _ in out[s]]:
             out[s] = [(proj, c) for proj, c in out[s] if proj != p]
     return out
 
 
-def removeForcedMatching(
-    pref: Dict[StudentID, List[Tuple[ProjectID, int]]], config: Config
-) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
-    out = pref.copy()
+def removeForcedMatching(pref: PrefType, config: Config) -> PrefType:
+    out = deepcopy(pref)
     for s, p in config.forcedMatching.items():
         if s in out.keys():
             out.pop(s)
@@ -280,7 +287,6 @@ def allocate(
             config,
         )
         i += 1
-        print(i)
         if i > 1000:
             if movement in histories:
                 print("infiniteLoop")
@@ -301,7 +307,7 @@ def preAssignRandom(
     loadingMap: Dict[StaffID, int] = defaultdict(int)
 
     for s in students:
-        choices = studentPreferences[s].copy() + [ProjectID(0)]
+        choices = deepcopy(studentPreferences[s]) + [ProjectID(0)]
         random.shuffle(choices)
         for choice in choices:
             if choice == ProjectID(0):
@@ -347,7 +353,7 @@ def preAssignRSD(
 
 # now costmap only track the preference order
 def getCostMap(
-    studentPreferencesCost: Dict[StudentID, List[Tuple[ProjectID, int]]],
+    studentPreferencesCost: PrefType,
     config: Config = Config(),
 ) -> Dict[Tuple[StudentID, ProjectID], int]:
     costMap: Dict[Tuple[StudentID, ProjectID], int] = {}
@@ -355,7 +361,10 @@ def getCostMap(
         for project, cost in projects:
             if project != 0:
                 costMap[(s, project)] = cost
-        costMap[(s, ProjectID(0))] = config.costUnalloc
+        if config.costUnalloc == -1:
+            costMap[(s, ProjectID(0))] = len(studentPreferencesCost[s]) + 1
+        else:
+            costMap[(s, ProjectID(0))] = config.costUnalloc
     return costMap
 
 
@@ -437,7 +446,7 @@ def BFS(
             depth += 1
             if depth > config.maxDepth:
                 continue
-            moves = studentPreferences[x].copy() + [ProjectID(0)]
+            moves = deepcopy(studentPreferences[x]) + [ProjectID(0)]
             random.shuffle(moves)
             for project in moves:
                 if project == SPallocation[x]:
@@ -516,16 +525,14 @@ def checkload(localLoadMap, config) -> bool:
     return True
 
 
-def createStudentPrefMap(
-    inputDict: List[Dict[str, str]]
-) -> Dict[StudentID, List[Tuple[ProjectID, int]]]:
-    ret: Dict[StudentID, List[Tuple[ProjectID, int]]] = {}
+def createStudentPrefMap(inputDict: List[Dict[str, str]]) -> PrefType:
+    ret: PrefType = {}
     for row in inputDict:
-        ret[StudentID(int(row["name"]))] = getPrefListFromMap(row)
+        ret[StudentID(int(row["name"]))] = getPrefTypeFromMap(row)
     return ret
 
 
-def getPrefListFromMap(studentDict: Dict[str, str]) -> List[Tuple[ProjectID, int]]:
+def getPrefTypeFromMap(studentDict: Dict[str, str]) -> List[Tuple[ProjectID, int]]:
     projectList: List[Tuple[ProjectID, int]] = []
     for i in range(1, 11):
         projectList.append(
@@ -542,7 +549,7 @@ def applyShiftOrRotate(
     PSalloc: Dict[ProjectID, StudentID],
     moves: List[Move],
 ) -> Tuple[Dict[StudentID, ProjectID], Dict[ProjectID, StudentID]]:
-    SPalloc1 = SPalloc.copy()
+    SPalloc1 = deepcopy(SPalloc)
     for move in moves:
         SPalloc1[move[0]] = move[1]
     return SPalloc1, {v: k for k, v in SPalloc1.items()}
@@ -567,7 +574,7 @@ def ShiftLoadMap(
     StaffProjectMap: Dict[ProjectID, StaffID],
 ) -> Tuple[Dict[StaffID, int], float]:
     meanLoad = mean(loadMap.values())
-    copiedLoadMap = loadMap.copy()
+    copiedLoadMap = deepcopy(loadMap)
     projRemove = SPalloc[moves[0][0]]
     projAdd = moves[-1][1]
     costLoad = 0.0
@@ -630,3 +637,212 @@ def costUnfair(SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]):
 
 if __name__ == "__main__":
     local_run(sys.argv[1], sys.argv[2])
+
+
+def findBestDepthandRuns(
+    studentPreferences,
+    StaffProjMap,
+    staffPreferences=None,
+    config=Config(),
+    callback=None,
+):
+    progressGlobal = 0.0
+
+    d = 1
+    depth_histories = None
+    bestNumRuns = -1
+    if callback:
+        callback.send(None)
+    while True:
+        print(f"running depth = {d}")
+        if callback:
+            progressGlobal = (d / 20) * 100
+            callback.send(progressGlobal)
+        print(f" progres {progressGlobal}")
+        print(bestNumRuns)
+        config.maxDepth = d
+        d += 1
+        results = []
+        costs = []
+        config.numRuns = 1
+        startTime = time.time()
+        r = bestAllocate(studentPreferences, StaffProjMap, config=config)
+        duration = time.time() - startTime
+        costMap_original = getCostMap(studentPreferences, config)
+        staffCostMap = getStaffCostMap(staffPreferences, config)
+        c = getcurrentCost(config, r, costMap_original, staffCostMap, StaffProjMap)
+        results += [r]
+        costs += [c]
+        numRuns = max(min(math.floor(1200 / duration), 500), bestNumRuns)
+        if numRuns < 3:
+            if callback:
+                callback.send(100)
+            return rs[cs.index(min(cs))], (d, 500)
+        config.numRuns = numRuns
+        rs, cs = bestAllocateAllResults(studentPreferences, StaffProjMap, config=config)
+        bestNumRuns = checkConverage(cs)
+        if bestNumRuns == -1:
+            depth_histories = None
+            continue
+        if min(cs) == depth_histories:
+            if callback:
+                callback.send(100)
+            return rs[cs.index(min(cs))], (d - 1, bestNumRuns)
+        if bestNumRuns != -1:
+            depth_histories = min(cs)
+
+
+def runWithoutConfig(
+    studentPreferences, StaffProjMap, staffPreferences=None, config=Config()
+):
+    d = 1
+    p_coverage = 0
+    minPrev = None
+    bestNumRuns = -1
+    patient = 0
+    while True:
+        config.maxDepth = d
+        results = []
+        costs = []
+        config.numRuns = 1
+        startTime = time.time()
+        r = bestAllocate(studentPreferences, StaffProjMap, config=config)
+        duration = time.time() - startTime
+        costMap_original = getCostMap(studentPreferences, config)
+        staffCostMap = getStaffCostMap(staffPreferences, config)
+        c = getcurrentCost(config, r, costMap_original, staffCostMap, StaffProjMap)
+        results += [r]
+        costs += [c]
+        numRuns = min(math.floor(600 / duration), 300)
+        if numRuns < 3:
+            return None
+        config.numRuns = numRuns
+        rs, cs = bestAllocateAllResults(studentPreferences, StaffProjMap, config=config)
+        if minPrev == min(cs):
+            patient += 1
+            if patient >= 3:
+                return rs[cs.index(min(cs))], (d - 1, prev_numRuns)
+            n = checkConverage(cs)
+            if n == -1:
+                n = numRuns
+            prev_numRuns = n
+        if minPrev == None or minPrev > min(cs):
+            patient = 0
+            minPrev = min(cs)
+
+        d += 1
+
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i : i + n]
+
+
+def checkConverage(costs):
+    toRuns = range(2, int(len(costs) / 3) + 1)
+    for n in set(toRuns):
+        list_costs = chunks(costs, n)
+        mins = [min(l) for l in list_costs]
+        if (mins.count(min(mins)) / len(mins)) > 0.80:
+            return n
+    return -1
+
+
+def configSearch(
+    studentPreferences, StaffProjMap, staffPref=None, config=Config(), callback=None
+):
+    costMap = getCostMap(studentPreferences, config)  # search for best rank
+    max_rank = max([c for v in studentPreferences.values() for _, c in v])
+    max_load = max(getStaffLoading(StaffProjMap).values())
+    config.maxRank = max_rank + 1
+    config.defaultLoad = max_load + 1
+    alloc, (depth, numRuns) = findBestDepthandRuns(
+        studentPreferences, StaffProjMap, staffPref, config, callback
+    )
+    bottleneckRank = maxRank(alloc, costMap)
+    bottleneckLoad = maxLoad(alloc, StaffProjMap)
+
+    # run allocation with time limit
+    config.defaultLoad = max(bottleneckLoad + 1, 2)
+    config.maxRank = max(int(bottleneckRank * 2 / 3), 2)
+    config.maxDepth = depth
+    config.numRuns = numRuns
+    alloc = bestAllocate(studentPreferences, StaffProjMap, staffPref, config=config)
+
+    return config, alloc
+
+
+def getStaffLoading(projStaff):
+    out = defaultdict(int)
+    for p, s in projStaff.items():
+        out[s] += 1
+    return out
+
+
+def maxRank(SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]) -> int:
+    relevant = [costMap[(k, v)] for k, v in SPalloc.items() if v != 0]
+    return max(relevant) if len(relevant) != 0 else 0
+
+
+def maxLoad(
+    SPalloc: Dict[StudentID, ProjectID], ProjStaffMap: Dict[ProjectID, StaffID]
+):
+    loadings = getLoadMap(ProjStaffMap, SPalloc)
+    return max(loadings.values()) if len(loadings) != 0 else 0
+
+
+def splitProject(
+    splitProjects: List[ProjectID],
+    studentPreferences: PrefType,
+    projStaffMap: Dict[ProjectID, StaffID],
+    staffPreferences: Optional[Dict[ProjectID, List[Tuple[StudentID, int]]]] = None,
+) -> Tuple[
+    PrefType,
+    Dict[ProjectID, StaffID],
+    Optional[Dict[ProjectID, List[Tuple[StudentID, int]]]],
+]:
+    outPref = deepcopy(studentPreferences)
+    outStaffProjMap = deepcopy(projStaffMap)
+    outStaffPref = None
+    if staffPreferences:
+        outStaffPref = deepcopy(staffPreferences)
+
+    for s in splitProjects:
+        projectNewID = ProjectID(max(outStaffProjMap.keys()) + 1)
+        print(f"adding {projectNewID}")
+        for _, lc_proj in outPref.items():
+            for p, c in lc_proj:
+                if p == s:
+                    lc_proj += [(projectNewID, c)]
+        if staffPreferences:
+            outStaffPref[projectNewID] = outStaffPref.get(s)
+        outStaffProjMap[projectNewID] = outStaffProjMap[s]
+    return outPref, outStaffProjMap, outStaffPref
+
+
+def configHeuristic(
+    studentPreferences: PrefType,
+    staffProjMap: Dict[ProjectID, StaffID],
+    config: Optional[Config] = None,
+) -> Config:
+    if not config:
+        config = Config()
+    noStudents = len(studentPreferences)
+    depth = min(12, math.exp(int(0.308 * math.log(noStudents) + 0.433)))
+    numRuns = 30
+    if noStudents > 500:
+        numRuns = int(0.05 * (noStudents - 500) + 30)
+    config.maxDepth - depth
+    config.numRuns = numRuns
+    loading = getStaffLoading(staffProjMap)
+    config.defaultLoad = stat.median(list(loading.values())) + 1
+    maxRank = max([r for _, l in studentPreferences.items() for (_, r) in l])
+    config.maxRank = math.ceil(maxRank * 0.4)
+    return config
+
+def getStaffLoading(projStaff):
+    out = defaultdict(int)
+    for p, s in projStaff.items():
+        out[s]+=1
+    return out

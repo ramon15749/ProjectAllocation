@@ -47,8 +47,20 @@ export default {
     };
   },
   methods: {
+    arrayToMap(input) {
+      return input.reduce((obj, item) => {
+        if (!item.key) {
+          return obj;
+        } else {
+          return {
+            ...obj,
+            [parseInt(item.key)]: item.value,
+          };
+        }
+      }, {});
+    },
     updateData() {
-      this.$emit("update:modelValue", this.applicants);
+      this.$emit("update:modelValue", this.arrayToMap(this.applicants));
     },
     addVisa() {
       this.applicants.push({

@@ -8,7 +8,7 @@
         Please upload files before allocation
       </div>
       <div v-else>
-        <Config @yeet="test" />
+        <Config @yeet="test" id="" />
       </div>
     </OverlayPanel>
 

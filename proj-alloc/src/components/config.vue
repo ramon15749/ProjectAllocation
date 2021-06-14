@@ -1,33 +1,38 @@
 <template>
   <div>
-    <ConfigShort configName="Default Staff Load" v-model.number="defaultLoad" />
-    <ConfigShort configName="max Depth" v-model.number="maxDepth" />
-    <ConfigShort configName="number of Run" v-model.number="numRuns" />
-    <ConfigShort configName="Max Rank" v-model.number="maxRank" />
+    <Uploadjson filename="config" v-model="config" />
+    <ConfigShort
+      configName="Default Staff Load"
+      v-model.number="config.defaultLoad"
+    />
+    <ConfigShort configName="max Depth" v-model.number="config.maxDepth" />
+    <ConfigShort configName="number of Run" v-model.number="config.numRuns" />
+    <ConfigShort configName="Max Rank" v-model.number="config.maxRank" />
     <Fieldset legend="Advance" :toggleable="true" :collapsed="true">
       <ConfigShort
         configName="Weight Of Unfair Loading"
-        v-model.number="weightUnfair"
+        v-model.number="config.weightUnfair"
       />
       <ConfigShort
         configName="Weight of Variance of Loading"
-        v-model.number="weightVariance"
+        v-model.number="config.weightVariance"
       />
       <ConfigLong
         v-bind:configList="store.state.refLecturerNameMap"
-        v-model="specialLoading"
+        v-model="config.specialLoading"
+        initValue="config.specialLoading"
       />
       <ConfigLongDropdowns
         configName="Forced Matching"
         v-bind:configList1="store.state.refstudentNameMap"
         v-bind:configList2="store.state.refProjectTitleMap"
-        v-model="forcedMatching"
+        v-model="config.forcedMatching"
       />
       <ConfigLongDropdowns
         configName="Disallowed Matching"
         v-bind:configList1="store.state.refstudentNameMap"
         v-bind:configList2="store.state.refProjectTitleMap"
-        v-model="disallowedMatching"
+        v-model="config.disallowedMatching"
       />
     </Fieldset>
 
@@ -41,33 +46,27 @@ import axios from "axios";
 import ConfigShort from "../components/configShort";
 import ConfigLong from "../components/configLong";
 import ConfigLongDropdowns from "../components/configLongDropdowns";
+import Uploadjson from "../components/uploadjson.vue";
 import md5 from "crypto-js/md5";
 import { inject } from "vue";
 export default {
   name: "Config",
-  components: { ConfigShort, ConfigLong, ConfigLongDropdowns },
-  props: ["defaultConfig"],
+  components: { ConfigShort, ConfigLong, ConfigLongDropdowns, Uploadjson },
   setup() {
     const store = inject("store");
     return { store };
   },
-  data() {
-    return {
-      pref: "",
-      proj: "",
+  mounted() {
+    // var cachedConfig = localStorage.getItem(
+    //   "config_" + this.store.state.currentJobID
+    // );
+    this.config = {
       defaultLoad: "",
       maxDepth: "",
       numRuns: "",
       weightUnfair: 0,
       weightVariance: 0,
       maxRank: 10,
-      parsedPref: [],
-      parsedProj: [],
-      hideUpload: false,
-      LecturerNameMap: {},
-      projectTitleMap: {},
-      studentNameMap: {},
-      selectedCity: null,
       specialLoading: [
         {
           key: "",
@@ -80,12 +79,50 @@ export default {
           value: "",
         },
       ],
-      forcedMatching: [
-        {
-          key: "",
-          value: "",
-        },
-      ],
+      forcedMatching: {},
+    };
+    // if (cachedConfig !== null) {
+    //   this.config = this.reformatConfig(JSON.parse(cachedConfig));
+    //   console.log("hithere ", this.config);
+    // }
+  },
+  data() {
+    return {
+      pref: "",
+      proj: "",
+      config: {
+        defaultLoad: "",
+        maxDepth: "",
+        numRuns: "",
+        weightUnfair: 0,
+        weightVariance: 0,
+        maxRank: 10,
+        specialLoading: [
+          {
+            key: "4342",
+            value: "423",
+          },
+        ],
+        disallowedMatching: [
+          {
+            key: "",
+            value: "",
+          },
+        ],
+        forcedMatching: [
+          {
+            key: "432423",
+            value: "fds",
+          },
+        ],
+      },
+      parsedPref: [],
+      parsedProj: [],
+      hideUpload: false,
+      LecturerNameMap: {},
+      projectTitleMap: {},
+      studentNameMap: {},
+      selectedCity: null,
     };
   },
   computed: {},
@@ -118,15 +155,13 @@ export default {
     submitFiles() {
       let formData = new FormData();
       const config = {
-        maxDepth: this.maxDepth,
-        defaultLoad: this.defaultLoad,
-        numRuns: this.numRuns,
-        maxRank: this.maxRank,
-        weightUnfair: this.weightUnfair,
-        weightVariance: this.weightVariance,
-        specialLoading: this.arrayToMap(this.specialLoading),
-        forcedMatching: this.arrayToMap(this.forcedMatching),
-        disallowedMatching: this.arrayToMap(this.disallowedMatching),
+        maxDepth: this.config.maxDepth,
+        defaultLoad: this.config.defaultLoad,
+        numRuns: this.config.numRuns,
+        maxRank: this.config.maxRank,
+        weightUnfair: this.config.weightUnfair,
+        weightVariance: this.config.weightVariance,
+        forcedMatching: this.config.forcedMatching,
       };
       const json = JSON.stringify(config);
       console.log("JSON:" + json);
@@ -135,16 +170,24 @@ export default {
       });
       formData.append("pref", this.store.state.refpref);
       formData.append("proj", this.store.state.refproj);
-      console.log("storeeee", this.store.state.refpref);
       formData.append("config", blob);
       axios
-        .post("http://localhost:5050/allocate/", formData, {
+        .post("http://localhost:5050/allocate_file/", formData, {
           header: {
             "Content-Type": "multipart/form-data",
           },
         })
         .then((res) => this.redirect(res))
         .catch((err) => console.log(err));
+    },
+    reformatConfig(input) {
+      var test = Object.entries(input.specialLoading).map(([k, v]) => {
+        return {
+          key: this.parsedPref[k],
+          value: v,
+        };
+      });
+      console.log(test);
     },
     redirect(res) {
       var id = res.data.id;

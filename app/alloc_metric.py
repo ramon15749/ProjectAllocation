@@ -6,7 +6,6 @@ from functools import reduce
 
 def maxRank(SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]) -> int:
     relevant = [costMap[(k, v)] for k, v in SPalloc.items() if v != 0]
-    print([f"{k} {v} {costMap[(k, v)]}" for k, v in SPalloc.items() if v != 0])
     return max(relevant) if len(relevant) != 0 else 0
 
 
@@ -20,7 +19,9 @@ def avgRank(
     costMap: Dict[Move, int],
     skipUnassign: bool = True,
 ) -> float:
-    return sumCost(SPalloc, costMap, skipUnassign) / len(SPalloc)
+    return sumCost(SPalloc, costMap, skipUnassign) / len(
+        [1 for p in SPalloc.values() if p != 0]
+    )
 
 
 def varRank(SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]):
@@ -82,6 +83,7 @@ def getStat(
     result["MaxRank"] = maxRank(SPalloc, costMap)
     result["MedianRank"] = medianRank(SPalloc, costMap)
     result["AvgRank"] = avgRank(SPalloc, costMap, False)
+    result["AvgRankNoUnalloc"] = avgRank(SPalloc, costMap, True)
     result["VarianceRank"] = varRank(SPalloc, costMap)
     result["MaxLoad"] = maxLoad(SPalloc, ProjStaffMap)
     result["MedianLoad"] = medianLoad(SPalloc, ProjStaffMap)

@@ -1,0 +1,1 @@
+"{\"maxDepth\": 10, \"defaultLoad\": 4, \"specialLoading\": {}, \"forcedMatching\": {}, \"disallowedMatching\": {}, \"preferredStudent\": {}, \"numRuns\": 20, \"maxRank\": 3, \"costUnalloc\": 100, \"costNoStaffPref\": 10, \"weightStaff\": 10, \"weightRank\": 1, \"weightUnfair\": 0.1, \"weightVarLoad\": 0.01, \"steepest\": false, \"preAssignType\": \"RSD\"}"

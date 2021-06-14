@@ -1,9 +1,20 @@
 <template>
   <div class="home">
     <h1>Upload Files</h1>
-    <Uploadfile filename="student-pref" v-model="refpref" />
-    <Uploadfile filename="project-info" v-model="refproj" />
+    <Uploadfile
+      filename="Student Preferences"
+      v-model="refpref"
+      style="padding=5px"
+    />
+
+    <Uploadfile filename="Project-Staff Map" v-model="refproj" />
+    <Uploadfile filename="Staff Preferences" v-model="refproj" />
+    <br />
+    <br />
     <Button v-on:click="parseFile2()">Parse File!</Button>
+    <br />
+    <br />
+    <ConfigSearch />
   </div>
 </template>
 
@@ -17,10 +28,11 @@ import {
   getStudentMap,
   getProjectMap,
 } from "../components/common";
+import ConfigSearch from "../components/configSearch.vue";
 import { ref, inject } from "vue";
 export default {
   name: "Home",
-  components: { Uploadfile },
+  components: { Uploadfile, ConfigSearch },
   data() {
     return {
       pref: "",
