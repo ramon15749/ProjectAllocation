@@ -31,6 +31,9 @@ ProjectID = NewType("ProjectID", int)
 Move = Tuple[StudentID, ProjectID]
 PrefType = Dict[StudentID, List[Tuple[ProjectID, int]]]
 
+globalPruneCount = 0
+globaltotalCount = 0
+
 
 @dataclass_json
 @dataclass
@@ -287,12 +290,18 @@ def allocate(
             config,
         )
         i += 1
+        # print(i)
         if i > 1000:
             if movement in histories:
                 print("infiniteLoop")
                 break
             histories += [movement]
     assert len(studentPreferences) == len(SPalloc)
+    global globalPruneCount
+    global globaltotalCount
+    print(
+        f"{globalPruneCount} / {globaltotalCount} = {globalPruneCount/globaltotalCount}"
+    )
     return SPalloc
 
 
@@ -438,7 +447,8 @@ def BFS(
     while q:
         x, depth, partialSum, path = q.popleft()
         if x == s and depth != 0:
-            if partialSum < 1e-15:
+            if partialSum < 1e-15 and partialSum != 0:
+                # print(partialSum)
                 cycle_or_shift.append((path, False, partialSum))
                 if not config.steepest:
                     return cycle_or_shift
@@ -462,7 +472,12 @@ def BFS(
                             SPallocation, loadMap, movePath, projStaffMap
                         )
                         movePartialSum += config.weightVarLoad * costShift
-                        if checkload(localLoadMap, config) and movePartialSum < 1e-15:
+                        if (
+                            checkload(localLoadMap, config)
+                            and movePartialSum < 1e-15
+                            and partialSum != 0
+                        ):
+                            # print(movePartialSum)
                             cycle_or_shift.append((movePath, True, movePartialSum))
                             if not config.steepest:
                                 return cycle_or_shift
@@ -474,9 +489,13 @@ def BFS(
 def isValid(
     s: StudentID, move: ProjectID, SPalloc: Dict[StudentID, ProjectID], partialSum: int
 ) -> bool:
+    global globaltotalCount
+    globaltotalCount += 1
     if SPalloc[s] == move:
         return False
     if partialSum >= 0:
+        global globalPruneCount
+        globalPruneCount += 1
         return False
     return True
 
@@ -633,10 +652,6 @@ def getUnfairDict(
 def costUnfair(SPalloc: Dict[StudentID, ProjectID], costMap: Dict[Move, int]):
     unfair = getUnfairDict(SPalloc, costMap)
     return reduce(lambda acc, x: acc + sum(x), unfair.values(), 0)
-
-
-if __name__ == "__main__":
-    local_run(sys.argv[1], sys.argv[2])
 
 
 def findBestDepthandRuns(
@@ -841,8 +856,9 @@ def configHeuristic(
     config.maxRank = math.ceil(maxRank * 0.4)
     return config
 
+
 def getStaffLoading(projStaff):
     out = defaultdict(int)
     for p, s in projStaff.items():
-        out[s]+=1
+        out[s] += 1
     return out

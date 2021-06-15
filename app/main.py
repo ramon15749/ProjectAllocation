@@ -219,7 +219,7 @@ def get_config():
     if job:
         job.refresh()
         logging.warning(f"jobs progress {job}")
-        return jsonify(dataclasses.asdict(job.meta.get("config"))), 200
+        return jsonify(job.meta.get("config")), 200
     return ("", 204)
 
 

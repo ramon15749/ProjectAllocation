@@ -5,6 +5,7 @@ from pprint import pprint
 from collections import defaultdict
 import time
 import json
+import csv
 import math
 import numpy as np
 import sys, getopt
@@ -79,7 +80,7 @@ if __name__ == "__main__":
         loc = sys.argv[1]
         filename = sys.argv[2]
         argv = sys.argv[3:]
-        opts, args = getopt.getopt(argv, "hmd:l:r:s:c:u:v:", ["ifile=", "ofile="])
+        opts, args = getopt.getopt(argv, "hmd:l:r:s:c:u:v:n:", ["ifile=", "ofile="])
     except getopt.GetoptError:
         print("test.py <loc> -o")
         sys.exit(2)
@@ -103,5 +104,8 @@ if __name__ == "__main__":
             config.weightUnfair = float(arg)
         elif opt in ("-weightVarLoad", "-l"):
             config.weightVarLoad = float(arg)
+        elif opt in ("-numRuns", "-n"):
+            config.numRuns = int(arg)
+    print(config)
 
     main(loc, filename, config)

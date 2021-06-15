@@ -82,10 +82,10 @@ def data_collection(studentPreferences, StaffProjMap, config, location, load):
     costMap = getCostMap(studentPreferences)
     start = time.time()
     scale = [j for j in range(startInterval, maxVal + 1, 1)]
-    scale = [30]
+    scale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 50, 100]
     print(scale)
     for i in scale:
-        config.numRuns = i
+        config.costUnalloc = i
         metric = "AvgRank"
         print(config)
         result = bestAllocate(studentPreferences, StaffProjMap, config=config)
