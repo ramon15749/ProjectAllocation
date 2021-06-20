@@ -9,7 +9,7 @@ sudo docker-compose build
 sudo docker-compose up -d
 ```
 
-point your browser to http://localhost:5000. There is also rq-dashboard running on http://localhost:5555
+The front-end GUI can be accessed via localhost:8080 while API endpoints is accessible via localhost:5050
 
 ## Docker containers
 
