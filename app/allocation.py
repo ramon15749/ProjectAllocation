@@ -447,7 +447,7 @@ def BFS(
     while q:
         x, depth, partialSum, path = q.popleft()
         if x == s and depth != 0:
-            if partialSum < 1e-15 and partialSum != 0:
+            if partialSum < -1e-15:
                 # print(partialSum)
                 cycle_or_shift.append((path, False, partialSum))
                 if not config.steepest:
@@ -472,11 +472,7 @@ def BFS(
                             SPallocation, loadMap, movePath, projStaffMap
                         )
                         movePartialSum += config.weightVarLoad * costShift
-                        if (
-                            checkload(localLoadMap, config)
-                            and movePartialSum < 1e-15
-                            and partialSum != 0
-                        ):
+                        if checkload(localLoadMap, config) and movePartialSum < -1e-15:
                             # print(movePartialSum)
                             cycle_or_shift.append((movePath, True, movePartialSum))
                             if not config.steepest:

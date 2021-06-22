@@ -81,10 +81,10 @@ def createMockData(
     return studentPreferences, staffProjMap
 
 
-def test_configHeuristic():
-    a, b = createMockData(150, 1.5, 1.5, 10, 3, 1.4, 1.24, 3, 8)
-    c = configHeuristic(a, b)
-    assert c == Config(maxDepth=10, numRuns=30, defaultLoad=2, maxRank=3)
+# def test_configHeuristic():
+#     a, b = createMockData(150, 1.5, 1.5, 10, 3, 1.4, 1.24, 3, 8)
+#     c = configHeuristic(a, b)
+#     assert c == Config(maxDepth=10, numRuns=30, defaultLoad=2, maxRank=3)
 
 
 def test_splitProject():
@@ -182,25 +182,30 @@ def test_costMap():
 def test_integration_linear_sum():
     numStudent = 150
     numProj = 200
-    prefs = randomPref(numStudent, numProj)
-    cost = np.full((numStudent, numProj + 1), 100)
+    prefs, staffProjMap = createMockData(
+        numStudent, numProj / numStudent, 15, 10, 4, 1.4, 2, 3.2, 8
+    )
+    cost = np.full((numStudent, len(staffProjMap)), 100)
     costMap = getCostMap(prefs)
 
     for (student, proj), value in costMap.items():
-        cost[student - 1][proj] = value
+        cost[student - 1][proj - 1] = value
     cost[::, 0] = 20
     expected_student, expected_rank = linear_sum_assignment(cost)
     expected = {a + 1: b for a, b in zip(expected_student, expected_rank)}
-
-    mockProjStaff = [(i, i) for i in range(1, numProj + 1)]
     result, _ = driver(
         Test(
             "linear sum",
             prefs,
             None,
-            mockProjStaff,
+            staffProjMap,
             config=Config(
-                weightStaff=0, weightUnfair=0, weightVarLoad=0, numRuns=10, maxDepth=10
+                defaultLoad=100,
+                weightStaff=0,
+                weightUnfair=0,
+                weightVarLoad=0,
+                numRuns=10,
+                maxDepth=10,
             ),
         ),
         bestAllocate,
@@ -323,6 +328,20 @@ def test_integration_sumCost():
         ),
         (
             Test(
+                "Rotation Only Simple Case",
+                {
+                    1: [(1, 1), (2, 2), (3, 3)],
+                    2: [(3, 1), (1, 2), (2, 3)],
+                    3: [(1, 1), (2, 2), (3, 3)],
+                },
+                None,
+                [(i, i) for i in range(1, 4)],
+                Config(defaultLoad=5),
+            ),
+            4,
+        ),
+        (
+            Test(
                 "Non-restricted Loading Test",
                 {1: [(1, 1), (2, 2), (3, 3)], 2: [(2, 1), (3, 2), (1, 3)]},
                 None,
@@ -369,12 +388,13 @@ def driver(test_input: TestSet, function):
     print("test")
     name, pref, staff_pref, proj_details, config = test_input
     print(f"running test {name}")
-    proj_staff = create_proj_staff(proj_details)
+    try:
+        proj_staff = create_proj_staff(proj_details)
+    except:
+        proj_staff = proj_details
     costMap = getCostMap(pref, config=config)
     r = function(pref, proj_staff, staff_pref, config=config)
-    print(type(r))
     if type(r) is tuple:
-        print("hi")
         _, r = r
     all_projects = list(filter((0).__ne__, list(r.values())))
     # ensure that no project is assigned twice
