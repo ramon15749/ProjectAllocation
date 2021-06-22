@@ -94,6 +94,7 @@ export default {
       console.log("emitting yeet");
       this.$emit("yeet");
       console.log("emitting yeet");
+      this.$router.push("allocation_result");
     },
   },
 };

@@ -1,19 +1,32 @@
 <template>
   <div class="home">
-    <h1>Upload Files</h1>
-    <Uploadfile
-      filename="Student Preferences"
-      v-model="refpref"
-      style="padding=5px"
-    />
-
-    <Uploadfile filename="Project-Staff Map" v-model="refproj" />
-    <Uploadfile filename="Staff Preferences" v-model="refproj" />
-    <br />
-    <br />
-    <Button v-on:click="parseFile2()">Parse File!</Button>
-    <br />
-    <br />
+    <Fieldset
+      legend="Upload files"
+      :toggleable="true"
+      v-model:collapsed="hideUpload"
+    >
+      <h1>Upload Files</h1>
+      <div class="p-grid p-ai-center vertical-container">
+        <div class="p-col-6">
+          <Button v-on:click="fetchFromServer()">Fetch From Server</Button>
+        </div>
+        <div class="p-col-6">
+          <h2>CSV Upload</h2>
+          <Uploadfile
+            filename="Student Preferences"
+            v-model="refpref"
+            style="padding=5px"
+          />
+          <Uploadfile filename="Project-Staff Map" v-model="refproj" />
+          <Uploadfile filename="Staff Preferences" v-model="refproj" />
+          <br />
+          <br />
+          <Button v-on:click="parseFile2()">Parse File!</Button>
+        </div>
+      </div>
+      <br />
+      <br />
+    </Fieldset>
     <ConfigSearch />
   </div>
 </template>
@@ -39,17 +52,32 @@ export default {
       proj: "",
       parsedPref: [],
       parsedProj: [],
-      hideUpload: false,
+      isCollapsed: false,
     };
   },
   setup() {
     const store = inject("store");
     let refpref = ref();
     let refproj = ref();
-
+    let hideUpload = ref(false);
+    const parseFromServer = function (res) {
+      console.log(res.data);
+      store.state.refparsedPref = res.data["prefs"];
+      store.state.refparsedProj = res.data["staff"];
+    };
+    const fetchFromServer = function () {
+      axios
+        .get(
+          "https://a411ce6b-a8bd-4547-93fd-984882202336.mock.pstmn.io/getData"
+        )
+        .then((res) => parseFromServer(res));
+      hideUpload.value = true;
+    };
     const parseFile2 = function () {
       store.state.refpref = refpref.value;
       store.state.refproj = refproj.value;
+      console.log(hideUpload);
+      hideUpload.value = true;
       Papa.parse(refpref.value, {
         header: true,
         complete: function (results) {
@@ -100,6 +128,8 @@ export default {
       refpref,
       refproj,
       parseFile2,
+      hideUpload,
+      fetchFromServer,
     };
   },
   methods: {
@@ -223,33 +253,6 @@ export default {
       localStorage.setItem("AllJobs", JSON.stringify(currentList));
       window.location = "/#/allocation_result?job_id=" + id;
     },
-
-    //downloadRes() {
-    //  const data = JSON.stringify(this.result);
-    //  const blob = new Blob([data], { type: "text/plain" });
-    //  const e = document.createEvent("MouseEvent");
-    //  var a = document.createElement("a");
-    //  a.download = "test.json";
-    //  a.href = window.URL.createObjectURL(blob);
-    //  a.dataset.downloadurl = ["text/json", a.download, a.href].join(":");
-    //  e.initEvent(
-    //    "click",
-    //    true,
-    //    false,
-    //    0,
-    //    0,
-    //    0,
-    //    0,
-    //    0,
-    //    false,
-    //    false,
-    //    false,
-    //    false,
-    //    0,
-    //    null
-    //  );
-    //  a.dispatchEvent(e);
-    //},
   },
 };
 </script>

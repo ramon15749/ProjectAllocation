@@ -31,8 +31,8 @@ export default {
     return {
       applicants: [
         {
-          key: "4324234",
-          value: "432",
+          key: "",
+          value: "",
         },
       ],
     };

@@ -57,9 +57,10 @@ export default {
     return { store };
   },
   mounted() {
-    // var cachedConfig = localStorage.getItem(
-    //   "config_" + this.store.state.currentJobID
-    // );
+    console.log("hello");
+    var cachedConfig = localStorage.getItem(
+      "config_" + this.store.state.currentJobID
+    );
     this.config = {
       defaultLoad: "",
       maxDepth: "",
@@ -81,10 +82,11 @@ export default {
       ],
       forcedMatching: {},
     };
-    // if (cachedConfig !== null) {
-    //   this.config = this.reformatConfig(JSON.parse(cachedConfig));
-    //   console.log("hithere ", this.config);
-    // }
+    if (cachedConfig !== null) {
+      this.config = JSON.parse(cachedConfig);
+      console.log("hithere ", this.config);
+    }
+    console.log(this.config);
   },
   data() {
     return {
@@ -99,8 +101,8 @@ export default {
         maxRank: 10,
         specialLoading: [
           {
-            key: "4342",
-            value: "423",
+            key: "",
+            value: "",
           },
         ],
         disallowedMatching: [
@@ -111,8 +113,8 @@ export default {
         ],
         forcedMatching: [
           {
-            key: "432423",
-            value: "fds",
+            key: "",
+            value: "",
           },
         ],
       },
@@ -181,13 +183,16 @@ export default {
         .catch((err) => console.log(err));
     },
     reformatConfig(input) {
+      console.log("input ", input);
       var test = Object.entries(input.specialLoading).map(([k, v]) => {
         return {
           key: this.parsedPref[k],
           value: v,
         };
       });
-      console.log(test);
+      console.log("test ", test);
+      input.specialLoading = test;
+      return input;
     },
     redirect(res) {
       var id = res.data.id;

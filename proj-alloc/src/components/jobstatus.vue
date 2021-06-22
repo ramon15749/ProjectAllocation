@@ -2,7 +2,7 @@
   <div>
     <p>Job {{ this.id }}</p>
     <div>The job's status is {{ this.status }}</div>
-    <ProgressBar :value="this.progress.percent" />
+    <ProgressBar :value="this.progress" />
     <div>The config is</div>
     <table style="margin: auto">
       <tr v-for="(c, v) in this.config" :key="c.v">
@@ -58,9 +58,9 @@
         <div class="p-mr-4">
           <h5>Unfair Magnitude: <br />{{ this.unfairMag }}</h5>
         </div>
-        <div class="p-mr-4">
-          <h5>Unfair Dict: <br />{{ this.unfairDict }}</h5>
-        </div>
+        <!-- <div class="p-mr-4"> -->
+        <!-- <h5>Unfair Dict: <br />{{ this.unfairDict }}</h5> -->
+        <!-- </div> -->
       </div>
       <DataTable :value="detailedRes" responsiveLayout="scroll">
         <Column field="CID" header="CID" :sortable="true"></Column>
@@ -196,7 +196,9 @@ export default {
             job_id: this.id,
           },
         })
-        .then((res) => ((this.progress = res.data), console.log(res.data)))
+        .then(
+          (res) => ((this.progress = res.data.percent), console.log(res.data))
+        )
         .catch(
           (err) => (console.log("oh no " + err), clearInterval(this.timer))
         );
