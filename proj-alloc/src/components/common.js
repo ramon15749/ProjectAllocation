@@ -138,6 +138,10 @@ export function getLecturerNameMap(inputJson){
 export function getLoadMap(allocation, ProjectLecturerMap){
     const result = Object.entries(allocation).reduce(function(map, [,v]){
         var lecturer = ProjectLecturerMap[v]
+        if (lecturer === undefined){
+            console.log(lecturer)
+            return map
+        }
         if (!(lecturer in map)){
             map[lecturer] = 0
         }
